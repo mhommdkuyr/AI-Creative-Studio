@@ -1,0 +1,1 @@
+{"$schema":"https://json-schema.org/draft/2020-12/schema","title":"edit_timeline","type":"object","properties":{"type":{"type":"string","enum":["split","delete","move","trim_start","trim_end","noop"]},"time":{"type":"number","minimum":0},"startTime":{"type":"number","minimum":0},"clipId":{"type":"string"}},"required":["type"],"additionalProperties":false}
