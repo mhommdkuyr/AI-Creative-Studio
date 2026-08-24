@@ -40,12 +40,6 @@ export function MvpEditor({ projectId }: { projectId: string }) {
     })();
   }, [projectId]);
 
-  async function refresh(response: Response) {
-    if (!response.ok) throw new Error(await response.text());
-    const data = await response.json();
-    setProject(data);
-  }
-
   async function upload(files: FileList | null) {
     if (!files?.length || !project) return;
     setStatus('جاري استيراد الفيديو…');
@@ -61,9 +55,12 @@ export function MvpEditor({ projectId }: { projectId: string }) {
   async function runCommand() {
     if (!project || !command.trim()) return;
     setStatus('جاري تنفيذ أمر AI…');
-    const r = await fetch(api(`/api/projects/${project.id}/command`), { method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({ text:command }) });
+    const r = await fetch(api(`/api/projects/${project.id}/ai-command`), { method:'POST', headers:{'content-type':'application/json'}, body:JSON.stringify({ text:command }) });
     if (!r.ok) { setStatus('فشل تنفيذ الأمر'); return; }
-    const d = await r.json(); setProject(p => p ? { ...p, timeline:d.timeline } : p); setStatus(`${d.command.message} • ${d.provider}`); setCommand('');
+    const d = await r.json();
+    setProject(p => p ? { ...p, timeline:d.timeline } : p);
+    setStatus(`${d.command.message} • ${d.provider}`);
+    setCommand('');
   }
 
   async function history(action:'undo'|'redo') {
@@ -121,7 +118,7 @@ export function MvpEditor({ projectId }: { projectId: string }) {
       </div>
 
       <aside className="rounded-xl border border-border bg-surface p-4 flex flex-col gap-4 min-h-0">
-        <div><div className="text-sm font-semibold mb-2">المساعد الذكي</div><div className="text-xs text-white/50">أوامر عربية مباشرة على الـTimeline. لا تحتاج مفتاح API.</div></div>
+        <div><div className="text-sm font-semibold mb-2">المساعد الذكي</div><div className="text-xs text-white/50">أوامر عربية مباشرة على الـTimeline. يعمل محليًا، ويمكن ربط OpenAI اختياريًا.</div></div>
         <div className="flex gap-2"><input className="flex-1 bg-surface-elevated border border-border rounded-lg px-3 py-2 text-sm" value={command} onChange={e=>setCommand(e.target.value)} onKeyDown={e=>{if(e.key==='Enter')runCommand()}} placeholder="مثال: قص أول 2 ثانية"/><button className="btn btn-primary" onClick={runCommand}>نفّذ</button></div>
         <div className="flex flex-wrap gap-2"><button className="btn text-xs" onClick={()=>setCommand('قسّم عند 2')}>Split عند 2s</button><button className="btn text-xs" onClick={()=>setCommand('احذف')}>Delete</button><button className="btn text-xs" onClick={()=>setCommand('حرّك إلى 3')}>Move إلى 3s</button><button className="btn text-xs" onClick={()=>setCommand('قص أول 1 ثانية')}>Trim 1s</button></div>
         <div className="mt-auto text-xs text-white/40">المشروع: {project?.name || '…'}<br/>المقاطع: {clips.length}<br/>حالة التشغيل: {playing?'تشغيل':'متوقف'}</div>
