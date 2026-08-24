@@ -193,7 +193,7 @@ function parseCommand(text: string, timeline: any) {
   const num = s.match(/(\d+(?:[.,]\d+)?)/)?.[1];
   if (/split|قسّم|قسم/.test(s) && num) return { type: 'split', time: Number(num.replace(',', '.')), clipId: clip.id, message: `قسّمت المقطع عند ${num} ثانية.` };
   if (/delete|remove|احذف|حذف/.test(s)) return { type: 'delete', clipId: clip.id, message: 'حذفت المقطع المحدد.' };
-  if (/move|حرّك|حرك/.test(s) && num) return { type: 'move', startTime: Number(num.replace(',', '.')), clipId: clip.id, message: `نقلت المقطع إلى ${num ثانية}.` };
+  if (/move|حرّك|حرك/.test(s) && num) return { type: 'move', startTime: Number(num.replace(',', '.')), clipId: clip.id, message: `نقلت المقطع إلى ${num} ثانية.` };
   if (/trim|قص|اقطع|أول/.test(s) && num) return { type: 'trim_start', time: Number(num.replace(',', '.')), clipId: clip.id, message: `قصصت بداية المقطع إلى ${num} ثانية.` };
   return { type: 'noop', message: 'لم أفهم الأمر. جرّب: قص أول 5 ثوانٍ، قسّم عند 10، احذف، حرّك إلى 3.' };
 }
