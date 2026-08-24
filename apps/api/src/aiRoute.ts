@@ -1,5 +1,6 @@
 import type { Express } from 'express';
 import type Database from 'better-sqlite3';
+import { randomUUID } from 'node:crypto';
 import { parseWithOpenAI } from './aiProvider.js';
 
 export function registerAIRoute(app:Express, db:Database.Database){
@@ -16,7 +17,7 @@ export function registerAIRoute(app:Express, db:Database.Database){
     const track=out.tracks.find((t:any)=>t.type==='video');
     const target=track?.clips?.find((c:any)=>c.id===command.clipId)||track?.clips?.[0];
     if(!target) return res.json({provider:'openai',command,timeline});
-    if(command.type==='split'){ const t=Number(command.time); if(t>target.startTime&&t<target.endTime){ const second=structuredClone(target); second.id=crypto.randomUUID(); second.startTime=t; second.endTime=target.endTime; second.duration=second.endTime-second.startTime; target.endTime=t; target.duration=t-target.startTime; track.clips.splice(track.clips.indexOf(target),1,target,second); } }
+    if(command.type==='split'){ const t=Number(command.time); if(t>target.startTime&&t<target.endTime){ const second=structuredClone(target); second.id=randomUUID(); second.startTime=t; second.endTime=target.endTime; second.duration=second.endTime-second.startTime; target.endTime=t; target.duration=t-target.startTime; track.clips.splice(track.clips.indexOf(target),1,target,second); } }
     else if(command.type==='delete'){ track.clips=track.clips.filter((c:any)=>c.id!==target.id); }
     else if(command.type==='move'){ const s=Math.max(0,Number(command.startTime||0)); target.startTime=s; target.endTime=s+target.duration; }
     else if(command.type==='trim_start'){ const s=Math.max(0,Number(command.time||0)); if(s<target.trimEnd){ const d=s-target.trimStart; target.trimStart=s; target.startTime=Math.max(0,target.startTime+d); target.duration=target.endTime-target.startTime; } }
