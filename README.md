@@ -36,7 +36,7 @@ The preferred AI path uses the Experiential Labs OpenAI-compatible gateway. Copy
 
 The API key must remain server-side and must not be committed to Git. `.env*` files are ignored while `.env.example` is allowed. Without an AI key, the deterministic local command parser remains active, so development and regression tests continue to work offline.
 
-Experiential Labs exposes an OpenAI-compatible `POST /v1/chat/completions` endpoint and documents `claude-fable-5.1` as an available model slug. citeturn152934search1turn152934search3
+Experiential Labs exposes an OpenAI-compatible `POST /v1/chat/completions` endpoint and documents `claude-fable-5.1` as an available model slug.
 
 ## Architecture direction
 
