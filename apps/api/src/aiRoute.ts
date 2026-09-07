@@ -1,7 +1,7 @@
 import type { Express } from 'express';
 import type Database from 'better-sqlite3';
 import { randomUUID } from 'node:crypto';
-import { parseWithOpenAI, type EditCommand } from './aiProvider.js';
+import { getAIProviderConfig, parseWithOpenAI, type EditCommand } from './aiProvider.js';
 
 export function registerAIRoute(app: Express, db: Database.Database) {
   app.post('/api/projects/:id/ai-command', async (req, res) => {
@@ -11,16 +11,15 @@ export function registerAIRoute(app: Express, db: Database.Database) {
 
     const timeline = JSON.parse(p.timeline_json);
     const clips = timeline.tracks.find((t: any) => t.type === 'video')?.clips || [];
-    const clip = clips[0];
     const fallback: EditCommand = { type: 'noop', message: 'لم أفهم الأمر بعد.' };
     const command = await parseWithOpenAI(String(req.body?.text || ''), timeline, fallback);
 
-    if (command.type === 'noop') return res.json({ provider: 'local', command, timeline });
+    if (command.type === 'noop') return res.json({ provider: getAIProviderConfig().provider, command, timeline });
 
     const out = structuredClone(timeline);
     const track = out.tracks.find((t: any) => t.type === 'video');
     const target = track?.clips?.find((c: any) => c.id === command.clipId) || track?.clips?.[0];
-    if (!target) return res.json({ provider: 'local', command, timeline });
+    if (!target) return res.json({ provider: getAIProviderConfig().provider, command, timeline });
 
     if (command.type === 'split') {
       const t = Number(command.time);
@@ -62,6 +61,6 @@ export function registerAIRoute(app: Express, db: Database.Database) {
     db.prepare('UPDATE projects SET timeline_json=?,history_json=?,history_index=?,updated_at=? WHERE id=?')
       .run(JSON.stringify(out), JSON.stringify(bounded), bounded.length - 1, new Date().toISOString(), projectId);
 
-    res.json({ provider: process.env.OPENAI_API_KEY ? 'openai' : 'local', command, timeline: out });
+    res.json({ provider: getAIProviderConfig().provider, command, timeline: out });
   });
 }
