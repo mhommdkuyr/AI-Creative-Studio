@@ -1,7 +1,7 @@
 import type { Express } from 'express';
 import type Database from 'better-sqlite3';
 import { applyOperations } from './editingEngine.js';
-import { getAIProvider, planWithOpenAI } from './aiProvider.js';
+import { planWithAI } from './aiProvider.js';
 
 function legacyCommand(operation: any, summary: string) {
   if (!operation) return { type: 'noop', message: summary };
@@ -16,8 +16,8 @@ export function registerAIRoute(app: Express, db: Database.Database) {
     const p: any = db.prepare('SELECT * FROM projects WHERE id=?').get(projectId);
     if (!p) throw new Error('Project not found');
     const timeline = JSON.parse(p.timeline_json);
-    const plan = await planWithOpenAI(text, timeline);
-    const next = applyOperations(timeline, plan.operations);
+    const planned = await planWithAI(text, timeline);
+    const next = applyOperations(timeline, planned.plan.operations);
     const changed = JSON.stringify(next) !== JSON.stringify(timeline);
     if (changed) {
       const history = JSON.parse(p.history_json).slice(0, Number(p.history_index) + 1);
@@ -26,7 +26,7 @@ export function registerAIRoute(app: Express, db: Database.Database) {
       db.prepare('UPDATE projects SET timeline_json=?,history_json=?,history_index=?,updated_at=? WHERE id=?')
         .run(JSON.stringify(next), JSON.stringify(bounded), bounded.length - 1, new Date().toISOString(), projectId);
     }
-    return { timeline: changed ? next : timeline, plan, changed };
+    return { timeline: changed ? next : timeline, plan: planned.plan, provider: planned.provider, changed };
   };
 
   app.post('/api/projects/:id/ai-command', async (req, res) => {
@@ -36,7 +36,7 @@ export function registerAIRoute(app: Express, db: Database.Database) {
     try {
       const result = await runPlan(projectId, text);
       const first = result.plan.operations.find((operation: any) => operation.op !== 'noop');
-      res.json({ provider: getAIProvider(), command: legacyCommand(first, result.plan.summary), ...result });
+      res.json({ provider: result.provider, command: legacyCommand(first, result.plan.summary), ...result });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'AI command failed';
       res.status(message === 'Project not found' ? 404 : 500).json({ error: message });
@@ -51,8 +51,8 @@ export function registerAIRoute(app: Express, db: Database.Database) {
     if (!p) return res.status(404).json({ error: 'Project not found' });
     try {
       const timeline = JSON.parse(p.timeline_json);
-      const plan = await planWithOpenAI(text, timeline);
-      res.json({ provider: getAIProvider(), plan, dryRun: true });
+      const planned = await planWithAI(text, timeline);
+      res.json({ provider: planned.provider, plan: planned.plan, dryRun: true });
     } catch (error) {
       res.status(500).json({ error: error instanceof Error ? error.message : 'AI planning failed' });
     }
