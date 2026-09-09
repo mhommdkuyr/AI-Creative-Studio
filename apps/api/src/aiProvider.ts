@@ -3,43 +3,28 @@ import { EDITING_OPERATION_NAMES, type EditPlan, type EditingOperation } from '.
 const DEFAULT_PLAN: EditPlan = { version: 1, summary: 'لم يتم تنفيذ أي تعديل.', operations: [{ op: 'noop', reason: 'No editing instruction could be compiled.' }] };
 
 const tool = {
-  type: 'function',
-  name: 'apply_edit_operations',
+  type: 'function', name: 'apply_edit_operations',
   description: 'Compile the user request into one deterministic ordered professional video-editing plan. Use multiple operations for compound requests. Every requested edit must be represented explicitly; never silently omit an operation.',
   parameters: {
-    type: 'object',
-    additionalProperties: false,
-    required: ['version', 'summary', 'operations'],
+    type: 'object', additionalProperties: false, required: ['version', 'summary', 'operations'],
     properties: {
-      version: { type: 'integer', enum: [1] },
-      summary: { type: 'string' },
-      operations: {
-        type: 'array', minItems: 1, maxItems: 100,
-        items: {
-          type: 'object', additionalProperties: false, required: ['op'],
-          properties: {
-            op: { type: 'string', enum: EDITING_OPERATION_NAMES },
-            args: { type: 'object', additionalProperties: true },
-            clipId: { type: ['string','null'] }, trackId: { type: ['string','null'] }, time: { type: ['number','null'] }, startTime: { type: ['number','null'] }, offset: { type: ['number','null'] },
-            trimStart: { type: ['number','null'] }, trimEnd: { type: ['number','null'] }, speed: { type: ['number','null'] }, volume: { type: ['number','null'] }, muted: { type: ['boolean','null'] }, opacity: { type: ['number','null'] },
-            x: { type: ['number','null'] }, y: { type: ['number','null'] }, scaleX: { type: ['number','null'] }, scaleY: { type: ['number','null'] }, rotation: { type: ['number','null'] }, anchorX: { type: ['number','null'] }, anchorY: { type: ['number','null'] },
-            left: { type: ['number','null'] }, top: { type: ['number','null'] }, right: { type: ['number','null'] }, bottom: { type: ['number','null'] }, mode: { type: ['string','null'] }, text: { type: ['string','null'] }, duration: { type: ['number','null'] },
-            style: { type: ['object','null'] }, label: { type: ['string','null'] }, color: { type: ['string','null'] }, effect: { type: ['string','null'] }, params: { type: ['object','null'] }, property: { type: ['string','null'] }, value: {},
-            fromClipId: { type: ['string','null'] }, toClipId: { type: ['string','null'] }, transitionType: { type: ['string','null'] }, fps: { type: ['number','null'] }, width: { type: ['number','null'] }, height: { type: ['number','null'] }, aspectRatio: { type: ['string','null'] }, order: { type: ['number','null'] }, name: { type: ['string','null'] }, locked: { type: ['boolean','null'] }, visible: { type: ['boolean','null'] }, reason: { type: ['string','null'] }
-          }
-        }
-      }
-    }
+      version: { type: 'integer', enum: [1] }, summary: { type: 'string' },
+      operations: { type: 'array', minItems: 1, maxItems: 100, items: { type: 'object', additionalProperties: false, required: ['op'], properties: {
+        op: { type: 'string', enum: EDITING_OPERATION_NAMES }, args: { type: 'object', additionalProperties: true },
+        clipId: { type: ['string','null'] }, trackId: { type: ['string','null'] }, time: { type: ['number','null'] }, startTime: { type: ['number','null'] }, offset: { type: ['number','null'] },
+        trimStart: { type: ['number','null'] }, trimEnd: { type: ['number','null'] }, speed: { type: ['number','null'] }, volume: { type: ['number','null'] }, muted: { type: ['boolean','null'] }, opacity: { type: ['number','null'] },
+        x: { type: ['number','null'] }, y: { type: ['number','null'] }, scaleX: { type: ['number','null'] }, scaleY: { type: ['number','null'] }, rotation: { type: ['number','null'] }, anchorX: { type: ['number','null'] }, anchorY: { type: ['number','null'] },
+        left: { type: ['number','null'] }, top: { type: ['number','null'] }, right: { type: ['number','null'] }, bottom: { type: ['number','null'] }, mode: { type: ['string','null'] }, text: { type: ['string','null'] }, duration: { type: ['number','null'] },
+        style: { type: ['object','null'] }, label: { type: ['string','null'] }, color: { type: ['string','null'] }, effect: { type: ['string','null'] }, params: { type: ['object','null'] }, property: { type: ['string','null'] }, value: {},
+        fromClipId: { type: ['string','null'] }, toClipId: { type: ['string','null'] }, transitionType: { type: ['string','null'] }, fps: { type: ['number','null'] }, width: { type: ['number','null'] }, height: { type: ['number','null'] }, aspectRatio: { type: ['string','null'] }, order: { type: ['number','null'] }, name: { type: ['string','null'] }, locked: { type: ['boolean','null'] }, visible: { type: ['boolean','null'] }, reason: { type: ['string','null'] }
+      } } }
   }, strict: true
 };
 
-function activeClips(timeline: any) {
-  return (timeline?.tracks || []).flatMap((track: any) => (track.clips || []).map((clip: any) => ({ id: clip.id, type: clip.type || track.type, name: clip.name, startTime: clip.startTime, endTime: clip.endTime, duration: clip.duration, trimStart: clip.trimStart, trimEnd: clip.trimEnd, speed: clip.speed, volume: clip.volume, text: clip.text, trackId: track.id, trackType: track.type })));
-}
+function activeClips(timeline: any) { return (timeline?.tracks || []).flatMap((track: any) => (track.clips || []).map((clip: any) => ({ id: clip.id, type: clip.type || track.type, name: clip.name, startTime: clip.startTime, endTime: clip.endTime, duration: clip.duration, trimStart: clip.trimStart, trimEnd: clip.trimEnd, speed: clip.speed, volume: clip.volume, text: clip.text, trackId: track.id, trackType: track.type })) ); }
 
 function firstLocalPlan(text: string, timeline: any): EditPlan {
-  const s = text.toLowerCase().replace(/\s+/g, ' ').trim();
-  const clips = activeClips(timeline); const clip = clips.find((c: any) => c.type === 'video') || clips[0];
+  const s = text.toLowerCase().replace(/\s+/g, ' ').trim(); const clips = activeClips(timeline); const clip = clips.find((c: any) => c.type === 'video') || clips[0];
   if (!clip) return { ...DEFAULT_PLAN, summary: 'أضف وسائط أولًا.' };
   const num = s.match(/(\d+(?:[.,]\d+)?)/)?.[1]; const value = num ? Number(num.replace(',', '.')) : undefined;
   if (/قسّم|قسم|split/.test(s) && value !== undefined) return { version: 1, summary: `تقسيم المقطع عند ${value} ثانية`, operations: [{ op: 'split', clipId: clip.id, time: value }] };
@@ -71,5 +56,8 @@ export async function planWithOpenAI(text: string, timeline: any): Promise<EditP
 }
 
 export async function parseWithOpenAI(text: string, timeline: any, fallback: any) {
-  const plan = await planWithOpenAI(text, timeline); const first = plan.operations.find(operation => operation.op !== 'noop'); return first ? first : fallback;
+  const plan = await planWithOpenAI(text, timeline); const first = plan.operations.find(operation => operation.op !== 'noop');
+  if (!first) return fallback;
+  if (first.op === 'trim_clip' && typeof first.trimStart === 'number' && first.trimEnd == null) return { type: 'trim_start', time: first.trimStart, clipId: first.clipId, message: 'تم تفسير أمر القص المتوافق.' };
+  return first;
 }
