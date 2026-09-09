@@ -87,9 +87,7 @@ export function applyOperations(input: any, operations: EditingOperation[]) {
         track.clips.push({ id: args.clipId || randomUUID(), assetId: args.assetId, name: args.name || 'clip', startTime: start, endTime: start + duration, trimStart: Number(args.trimStart || 0), trimEnd: Number(args.trimEnd ?? duration), duration, speed: 1, opacity: 1, effects: [], animations: [], keyframes: [] });
         break;
       }
-      case 'replace_source': {
-        const found = findClip(timeline, args.clipId); if (found) found.clip.assetId = args.assetId; break;
-      }
+      case 'replace_source':
       case 'relink_asset': {
         const found = findClip(timeline, args.clipId); if (found) found.clip.assetId = args.assetId; break;
       }
@@ -138,7 +136,7 @@ export function applyOperations(input: any, operations: EditingOperation[]) {
       }
       case 'slip_clip': { const found = findClip(timeline, args.clipId); if (found) found.clip.slip = Number(args.amount || 0); break; }
       case 'slide_clip': { const found = findClip(timeline, args.clipId); if (found) { const delta = Number(args.amount || 0); found.clip.startTime += delta; found.clip.endTime += delta; } break; }
-      case 'extend_clip': { const found = findClip(timeline, args.clipId); if (found) { const delta = Number(args.duration || 0); found.clip.endTime = Math.max(found.clip.startTime + 0.01, found.clip.endTime + delta); found.clip.duration = clipDuration(found.clip) + delta; } break; }
+      case 'extend_clip': { const found = findClip(timeline, args.clipId); if (found) { const delta = Number(args.duration || 0); found.clip.endTime = Math.max(found.clip.startTime + 0.01, found.clip.endTime + delta); found.clip.duration = Math.max(0.01, found.clip.endTime - found.clip.startTime); } break; }
       case 'set_speed': { const found = findClip(timeline, args.clipId); if (found) { const speed = Math.max(0.05, Math.min(16, Number(args.speed))); found.clip.speed = speed; const sourceDuration = Math.max(0.01, Number(found.clip.trimEnd || found.clip.endTime) - Number(found.clip.trimStart || 0)); found.clip.duration = sourceDuration / speed; found.clip.endTime = found.clip.startTime + found.clip.duration; } break; }
       case 'set_speed_ramp': { const found = findClip(timeline, args.clipId); if (found) found.clip.speedRamp = Array.isArray(args.points) ? args.points : []; break; }
       case 'set_time_remap': { const found = findClip(timeline, args.clipId); if (found) found.clip.timeRemap = Array.isArray(args.points) ? args.points : []; break; }
@@ -160,7 +158,7 @@ export function applyOperations(input: any, operations: EditingOperation[]) {
       case 'fit_clip':
       case 'fill_clip': { const found = findClip(timeline, args.clipId); if (found) found.clip.contentFit = operation.op === 'fit_clip' ? 'fit' : 'fill'; break; }
       case 'mirror_clip': { const found = findClip(timeline, args.clipId); if (found) found.clip.mirror = { horizontal: Boolean(args.horizontal), vertical: Boolean(args.vertical) }; break; }
-      case 'set_anchor': { const found = findClip(timeline, args.clipId); if (found) found.clip.anchor = { x: Number(args.x || 0.5), y: Number(args.y || 0.5) }; break; }
+      case 'set_anchor': { const found = findClip(timeline, args.clipId); if (found) found.clip.anchor = { x: Number(args.x ?? 0.5), y: Number(args.y ?? 0.5) }; break; }
       case 'set_perspective': { const found = findClip(timeline, args.clipId); if (found) found.clip.perspective = args.points || {}; break; }
       case 'set_blend_mode': { const found = findClip(timeline, args.clipId); if (found) found.clip.blendMode = args.mode; break; }
       case 'set_mask':
@@ -207,7 +205,6 @@ export function applyOperations(input: any, operations: EditingOperation[]) {
       case 'set_timeline': { if (typeof args.duration === 'number') timeline.duration = Math.max(0, args.duration); if (typeof args.fps === 'number') timeline.fps = Math.max(1, Math.min(240, args.fps)); if (typeof args.width === 'number') timeline.width = Math.max(16, args.width); if (typeof args.height === 'number') timeline.height = Math.max(16, args.height); if (typeof args.aspectRatio === 'string') timeline.aspectRatio = args.aspectRatio; if (typeof args.background === 'string') timeline.background = args.background; break; }
       case 'set_selection': { timeline.selection = { clipIds: args.clipIds || [], startTime: args.startTime, endTime: args.endTime }; break; }
       case 'clear_selection': { timeline.selection = null; break; }
-      case 'set_blend_mode': break;
       case 'detect_scenes':
       case 'detect_silence':
       case 'detect_beats':
