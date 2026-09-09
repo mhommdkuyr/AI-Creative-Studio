@@ -46,7 +46,7 @@ describe('integrated API', () => {
     expect(response.body.provider).toBe(expectedProvider);
     expect(response.body.command.type).toBe('trim_start');
     expect(response.body.timeline.tracks[0].clips[0].trimStart).toBe(1);
-  });
+  }, 30000);
 
   it('verifies Gemini with a real API call when GEMINI_API_KEY is configured', async () => {
     if (!process.env.GEMINI_API_KEY) return;
@@ -61,7 +61,7 @@ describe('integrated API', () => {
     expect(response.body.plan.operations.map((operation: any) => operation.op)).toEqual(
       expect.arrayContaining(['trim_clip', 'set_speed']),
     );
-  });
+  }, 30000);
 
   it('supports split, undo and redo', async () => {
     const split = await request(app).post(`/api/projects/${projectId}/command`).send({ text: 'قسّم عند 2' });
