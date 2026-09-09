@@ -1,32 +1,175 @@
-export type EditCommand = { type:'split'|'delete'|'move'|'trim_start'|'trim_end'|'noop'; time?:number; startTime?:number; clipId?:string; message?:string };
+import { EDITING_OPERATION_NAMES, type EditPlan, type EditingOperation } from './editingEngine.js';
 
-function localCommand(text:string, clip:any):EditCommand {
-  const s=text.toLowerCase().replace(/\s+/g,' ').trim();
-  const num=s.match(/(\d+(?:[.,]\d+)?)/)?.[1];
-  if(!clip) return {type:'noop',message:'أضف فيديو أولًا حتى أستطيع تعديل الـTimeline.'};
-  if(/split|قسّم|قسم/.test(s)&&num) return {type:'split',time:Number(num.replace(',','.')),clipId:clip.id,message:`قسّمت المقطع عند ${num} ثانية.`};
-  if(/delete|remove|احذف|حذف/.test(s)) return {type:'delete',clipId:clip.id,message:'حذفت المقطع المحدد.'};
-  if(/move|حرّك|حرك/.test(s)&&num) return {type:'move',startTime:Number(num.replace(',','.')),clipId:clip.id,message:`نقلت المقطع إلى ${num} ثانية.`};
-  if(/trim|قص|اقطع|أول/.test(s)&&num) return {type:'trim_start',time:Number(num.replace(',','.')),clipId:clip.id,message:`قصصت بداية المقطع إلى ${num} ثانية.`};
-  return {type:'noop',message:'لم أفهم الأمر بعد.'};
+const DEFAULT_PLAN: EditPlan = {
+  version: 1,
+  summary: 'لم يتم تنفيذ أي تعديل.',
+  operations: [{ op: 'noop', reason: 'No editing instruction could be compiled.' }],
+};
+
+const operationProperties = {
+  op: { type: 'string', enum: EDITING_OPERATION_NAMES }, args: { type: 'object', additionalProperties: true }, clipId: { type: ['string', 'null'] }, trackId: { type: ['string', 'null'] }, time: { type: ['number', 'null'] }, startTime: { type: ['number', 'null'] }, offset: { type: ['number', 'null'] },
+  trimStart: { type: ['number', 'null'] }, trimEnd: { type: ['number', 'null'] }, speed: { type: ['number', 'null'] }, volume: { type: ['number', 'null'] }, muted: { type: ['boolean', 'null'] }, opacity: { type: ['number', 'null'] },
+  x: { type: ['number', 'null'] }, y: { type: ['number', 'null'] }, scaleX: { type: ['number', 'null'] }, scaleY: { type: ['number', 'null'] }, rotation: { type: ['number', 'null'] }, anchorX: { type: ['number', 'null'] }, anchorY: { type: ['number', 'null'] },
+  left: { type: ['number', 'null'] }, top: { type: ['number', 'null'] }, right: { type: ['number', 'null'] }, bottom: { type: ['number', 'null'] }, mode: { type: ['string', 'null'] }, text: { type: ['string', 'null'] }, duration: { type: ['number', 'null'] },
+  style: { type: ['object', 'null'] }, label: { type: ['string', 'null'] }, color: { type: ['string', 'null'] }, effect: { type: ['string', 'null'] }, params: { type: ['object', 'null'] }, property: { type: ['string', 'null'] }, value: {},
+  fromClipId: { type: ['string', 'null'] }, toClipId: { type: ['string', 'null'] }, transitionType: { type: ['string', 'null'] }, fps: { type: ['number', 'null'] }, width: { type: ['number', 'null'] }, height: { type: ['number', 'null'] }, aspectRatio: { type: ['string', 'null'] },
+  order: { type: ['number', 'null'] }, name: { type: ['string', 'null'] }, locked: { type: ['boolean', 'null'] }, visible: { type: ['boolean', 'null'] }, reason: { type: ['string', 'null'] }, enabled: { type: ['boolean', 'null'] }, count: { type: ['number', 'null'] },
+};
+
+const tool = {
+  type: 'function', name: 'apply_edit_operations',
+  description: 'Compile the user request into one deterministic ordered professional video-editing plan. Use multiple operations for compound requests. Every requested edit must be represented explicitly; never silently omit an operation.',
+  parameters: {
+    type: 'object', additionalProperties: false, required: ['version', 'summary', 'operations'],
+    properties: { version: { type: 'integer', enum: [1] }, summary: { type: 'string' }, operations: { type: 'array', minItems: 1, maxItems: 100, items: { type: 'object', additionalProperties: false, required: ['op'], properties: operationProperties } } },
+  },
+  strict: true,
+};
+
+const geminiOperationProperties = {
+  op: { type: 'string', enum: EDITING_OPERATION_NAMES }, clipId: { type: 'string' }, trackId: { type: 'string' }, time: { type: 'number' }, startTime: { type: 'number' }, offset: { type: 'number' }, trimStart: { type: 'number' }, trimEnd: { type: 'number' }, speed: { type: 'number' }, volume: { type: 'number' }, muted: { type: 'boolean' }, opacity: { type: 'number' },
+  x: { type: 'number' }, y: { type: 'number' }, scaleX: { type: 'number' }, scaleY: { type: 'number' }, rotation: { type: 'number' }, anchorX: { type: 'number' }, anchorY: { type: 'number' }, left: { type: 'number' }, top: { type: 'number' }, right: { type: 'number' }, bottom: { type: 'number' }, mode: { type: 'string' },
+  text: { type: 'string' }, duration: { type: 'number' }, label: { type: 'string' }, color: { type: 'string' }, effect: { type: 'string' }, property: { type: 'string' }, value: { type: 'string' }, fromClipId: { type: 'string' }, toClipId: { type: 'string' }, transitionType: { type: 'string' }, fps: { type: 'number' }, width: { type: 'number' }, height: { type: 'number' }, aspectRatio: { type: 'string' },
+  order: { type: 'number' }, name: { type: 'string' }, locked: { type: 'boolean' }, visible: { type: 'boolean' }, reason: { type: 'string' }, enabled: { type: 'boolean' }, count: { type: 'number' }, amount: { type: 'number' }, assetId: { type: 'string' }, proxyAssetId: { type: 'string' }, horizontal: { type: 'boolean' }, vertical: { type: 'boolean' }, pan: { type: 'number' },
+  in: { type: 'number' }, out: { type: 'number' }, threshold: { type: 'number' }, intensity: { type: 'number' }, points: { type: 'array', items: { type: 'number' } }, clipIds: { type: 'array', items: { type: 'string' } }, groupId: { type: 'string' },
+};
+
+const geminiTool = {
+  name: tool.name,
+  description: tool.description,
+  parameters: {
+    type: 'object', required: ['version', 'summary', 'operations'],
+    properties: {
+      version: { type: 'integer' },
+      summary: { type: 'string' },
+      operations: { type: 'array', items: { type: 'object', required: ['op'], properties: geminiOperationProperties } },
+    },
+  },
+};
+
+const SYSTEM_PROMPT = 'You are the deterministic editing director for a professional nonlinear video editor. Convert each user request into an ordered executable plan. Handle arbitrarily compound instructions by decomposing them into explicit supported operations. Preserve intent, use exact asset/clip/track IDs from the supplied timeline, prefer operation fields for parameters, and never invent media IDs. When a capability requires asynchronous analysis or rendering, emit its dedicated operation so the job system can execute it; never silently replace a requested capability with noop.';
+
+function activeClips(timeline: any) {
+  return (timeline?.tracks || []).flatMap((track: any) => (track.clips || []).map((clip: any) => ({ id: clip.id, type: clip.type || track.type, name: clip.name, startTime: clip.startTime, endTime: clip.endTime, duration: clip.duration, trimStart: clip.trimStart, trimEnd: clip.trimEnd, speed: clip.speed, volume: clip.volume, text: clip.text, trackId: track.id, trackType: track.type })));
+}
+function timelineContext(timeline: any) { return JSON.stringify({ duration: timeline?.duration || 0, fps: timeline?.fps, width: timeline?.width, height: timeline?.height, tracks: activeClips(timeline) }); }
+
+function firstLocalPlan(text: string, timeline: any): EditPlan {
+  const s = text.toLowerCase().replace(/\s+/g, ' ').trim(); const clips = activeClips(timeline); const clip = clips.find((c: any) => c.type === 'video') || clips[0];
+  if (!clip) return { ...DEFAULT_PLAN, summary: 'أضف وسائط أولًا.' };
+  const num = s.match(/(\d+(?:[.,]\d+)?)/)?.[1]; const value = num ? Number(num.replace(',', '.')) : undefined;
+  if (/قسّم|قسم|split/.test(s) && value !== undefined) return { version: 1, summary: `تقسيم المقطع عند ${value} ثانية`, operations: [{ op: 'split', clipId: clip.id, time: value }] };
+  if (/احذف|حذف|remove|delete/.test(s)) return { version: 1, summary: 'حذف المقطع المحدد', operations: [{ op: 'delete_clip', clipId: clip.id }] };
+  if (/حرّك|حرك|move/.test(s) && value !== undefined) return { version: 1, summary: `نقل المقطع إلى ${value} ثانية`, operations: [{ op: 'move_clip', clipId: clip.id, startTime: value }] };
+  if (/سرعة|speed/.test(s) && value !== undefined) return { version: 1, summary: `تغيير السرعة إلى ${value}x`, operations: [{ op: 'set_speed', clipId: clip.id, speed: value }] };
+  if (/قص|اقطع|trim/.test(s) && value !== undefined) return { version: 1, summary: `قص بداية المقطع بمقدار ${value} ثانية`, operations: [{ op: 'trim_clip', clipId: clip.id, trimStart: value }] };
+  return DEFAULT_PLAN;
 }
 
-export async function parseWithOpenAI(text:string, timeline:any, fallback:EditCommand):Promise<EditCommand> {
-  const clip=timeline?.tracks?.find((t:any)=>t.type==='video')?.clips?.[0];
-  const local=localCommand(text,clip);
-  const key=process.env.OPENAI_API_KEY;
-  if(!key) return local.type==='noop'?fallback:local;
-  const model=process.env.OPENAI_MODEL || 'gpt-5.6-luna';
-  const tool={type:'function',name:'edit_timeline',description:'Change the active video timeline clip.',parameters:{type:'object',properties:{type:{type:'string',enum:['split','delete','move','trim_start','trim_end','noop']},time:{type:'number',minimum:0},startTime:{type:'number',minimum:0},clipId:{type:'string'}},required:['type'],additionalProperties:false},strict:true};
-  try {
-    const response=await fetch('https://api.openai.com/v1/responses',{method:'POST',headers:{'content-type':'application/json','authorization':`Bearer ${key}`},body:JSON.stringify({model,input:`Video timeline command. The active clip is ${JSON.stringify(clip||{})}. User request: ${text}`,tools:[tool],tool_choice:{type:'function',name:'edit_timeline'}})});
-    if(!response.ok) return local.type==='noop'?fallback:local;
-    const data:any=await response.json();
-    const call=(data.output||[]).find((item:any)=>item.type==='function_call'&&item.name==='edit_timeline');
-    if(!call) return local.type==='noop'?fallback:local;
-    const args=JSON.parse(call.arguments||'{}');
-    return {...args,clipId:args.clipId||clip?.id,message:'تم تفسير الأمر عبر OpenAI Tool Calling.'} as EditCommand;
-  } catch {
-    return local.type==='noop'?fallback:local;
+function cleanPlan(raw: any, timeline: any): EditPlan {
+  const clips = activeClips(timeline); const defaultClip = clips.find((c: any) => c.type === 'video') || clips[0];
+  const operations: EditingOperation[] = Array.isArray(raw?.operations) ? raw.operations.map((operation: any) => ({ ...operation, clipId: operation.clipId || defaultClip?.id })) : [];
+  return { version: 1, summary: String(raw?.summary || 'تم بناء خطة المونتاج.'), operations: operations.length ? operations : [{ op: 'noop', reason: 'The model returned no operations.' }] } as EditPlan;
+}
+
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+type GeminiCredential = { name: 'GEMINI_API_KEY' | 'GEMINI_API_KEY_2'; value: string };
+
+function getGeminiCredentials(): GeminiCredential[] {
+  const credentials: GeminiCredential[] = [];
+  if (process.env.GEMINI_API_KEY) credentials.push({ name: 'GEMINI_API_KEY', value: process.env.GEMINI_API_KEY });
+  if (process.env.GEMINI_API_KEY_2) credentials.push({ name: 'GEMINI_API_KEY_2', value: process.env.GEMINI_API_KEY_2 });
+  return credentials;
+}
+
+async function callGeminiModel(model: string, text: string, timeline: any, credential: GeminiCredential): Promise<EditPlan | null> {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
+    try {
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
+        method: 'POST', headers: { 'content-type': 'application/json', 'x-goog-api-key': credential.value }, signal: controller.signal,
+        body: JSON.stringify({
+          systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
+          contents: [{ role: 'user', parts: [{ text: `TIMELINE=${timelineContext(timeline)}\nREQUEST=${text}` }] }],
+          tools: [{ functionDeclarations: [geminiTool] }],
+          toolConfig: { functionCallingConfig: { mode: 'ANY', allowedFunctionNames: [geminiTool.name] } },
+          generationConfig: { temperature: 0 },
+        }),
+      });
+      if (response.ok) {
+        const data: any = await response.json(); const parts = data?.candidates?.[0]?.content?.parts || [];
+        const call = parts.find((part: any) => part?.functionCall?.name === geminiTool.name);
+        if (call?.functionCall?.args) {
+          console.log(`[gemini] success credential=${credential.name} model=${model}`);
+          return cleanPlan(call.functionCall.args, timeline);
+        }
+        console.error(`[gemini] ${credential.name} ${model} returned no function call`); return null;
+      }
+      const body = await response.text(); console.error(`[gemini] ${credential.name} ${model} HTTP ${response.status}: ${body.slice(0, 700)}`);
+      if (response.status !== 429 && response.status !== 503) return null;
+      if (attempt === 0) await sleep(500);
+    } catch (error) {
+      console.error(`[gemini] ${credential.name} ${model} request error`, error instanceof Error ? error.message : String(error));
+      if (attempt === 0) await sleep(500);
+    } finally { clearTimeout(timeout); }
   }
+  return null;
+}
+
+async function planWithGemini(text: string, timeline: any): Promise<EditPlan | null> {
+  const credentials = getGeminiCredentials();
+  if (!credentials.length) return null;
+  const configured = process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite';
+  const fallback = process.env.GEMINI_FALLBACK_MODEL || 'gemini-3.6-flash';
+  for (const credential of credentials) {
+    for (const model of [...new Set([configured, fallback])]) {
+      const plan = await callGeminiModel(model, text, timeline, credential);
+      if (plan) return plan;
+    }
+  }
+  return null;
+}
+
+export async function verifyGeminiCredentials(): Promise<Record<'GEMINI_API_KEY' | 'GEMINI_API_KEY_2', boolean | null>> {
+  const credentials = getGeminiCredentials();
+  const result: Record<'GEMINI_API_KEY' | 'GEMINI_API_KEY_2', boolean | null> = {
+    GEMINI_API_KEY: process.env.GEMINI_API_KEY ? false : null,
+    GEMINI_API_KEY_2: process.env.GEMINI_API_KEY_2 ? false : null,
+  };
+  const configured = process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite';
+  const fallback = process.env.GEMINI_FALLBACK_MODEL || 'gemini-3.6-flash';
+  for (const credential of credentials) {
+    for (const model of [...new Set([configured, fallback])]) {
+      const plan = await callGeminiModel(model, 'اختبار اتصال: أنشئ خطة لا تعدل شيئًا باستثناء noop.', { tracks: [] }, credential);
+      if (plan) {
+        result[credential.name] = true;
+        break;
+      }
+    }
+  }
+  return result;
+}
+
+async function planWithOpenAIProvider(text: string, timeline: any): Promise<EditPlan | null> {
+  const key = process.env.OPENAI_API_KEY; if (!key) return null; const model = process.env.OPENAI_MODEL || 'gpt-5.6-sol';
+  try {
+    const response = await fetch('https://api.openai.com/v1/responses', { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${key}` }, body: JSON.stringify({ model, input: [{ role: 'system', content: [{ type: 'input_text', text: SYSTEM_PROMPT }] }, { role: 'user', content: [{ type: 'input_text', text: `TIMELINE=${timelineContext(timeline)}\nREQUEST=${text}` }] }], tools: [tool], tool_choice: { type: 'function', name: tool.name } }) });
+    if (!response.ok) return null; const data: any = await response.json(); const call = (data.output || []).find((item: any) => item.type === 'function_call' && item.name === tool.name); if (!call) return null;
+    return cleanPlan(JSON.parse(call.arguments || '{}'), timeline);
+  } catch { return null; }
+}
+
+export async function planWithAI(text: string, timeline: any): Promise<{ plan: EditPlan; provider: 'gemini' | 'openai' | 'local' }> {
+  const gemini = await planWithGemini(text, timeline); if (gemini) return { plan: gemini, provider: 'gemini' };
+  const openai = await planWithOpenAIProvider(text, timeline); if (openai) return { plan: openai, provider: 'openai' };
+  return { plan: firstLocalPlan(text, timeline), provider: 'local' };
+}
+
+export async function planWithOpenAI(text: string, timeline: any): Promise<EditPlan> { return (await planWithAI(text, timeline)).plan; }
+export async function parseWithOpenAI(text: string, timeline: any, fallback: any) {
+  const plan = await planWithOpenAI(text, timeline); const first = plan.operations.find(operation => operation.op !== 'noop'); if (!first) return fallback;
+  if (first.op === 'trim_clip' && typeof first.trimStart === 'number' && first.trimEnd == null) return { type: 'trim_start', time: first.trimStart, clipId: first.clipId, message: 'تم تفسير أمر القص المتوافق.' };
+  return first;
 }

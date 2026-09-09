@@ -4,14 +4,19 @@ import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { app, db } from './server.js';
+import { verifyGeminiCredentials } from './aiProvider.js';
 
 let projectId = '';
 const fixture = join(tmpdir(), 'ai-creative-studio-test.mp4');
 
+const hasGemini = Boolean(process.env.GEMINI_API_KEY || process.env.GEMINI_API_KEY_2);
+const expectedProvider = hasGemini ? 'gemini' : process.env.OPENAI_API_KEY ? 'openai' : 'local';
+
 describe('integrated API', () => {
   beforeAll(() => {
-    execFileSync('ffmpeg', ['-y','-f','lavfi','-i','color=c=blue:s=640x360:r=30','-f','lavfi','-i','sine=frequency=880:sample_rate=48000','-t','3','-c:v','libx264','-pix_fmt','yuv420p','-c:a','aac',fixture], { stdio:'ignore' });
+    execFileSync('ffmpeg', ['-y', '-f', 'lavfi', '-i', 'color=c=blue:s=640x360:r=30', '-f', 'lavfi', '-i', 'sine=frequency=880:sample_rate=48000', '-t', '3', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac', fixture], { stdio: 'ignore' });
   });
+
   afterAll(() => { db.close(); });
 
   it('reports health and FFmpeg availability', async () => {
@@ -37,13 +42,35 @@ describe('integrated API', () => {
     expect(response.body.timeline.tracks[0].clips).toHaveLength(1);
   });
 
-  it('turns an Arabic edit request into a real AI tool operation without requiring an API key', async () => {
+  it('uses the configured real AI provider for an Arabic editing command', async () => {
     const response = await request(app).post(`/api/projects/${projectId}/ai-command`).send({ text: 'قص أول 1 ثانية' });
     expect(response.status).toBe(200);
-    expect(response.body.provider).toBe('local');
+    expect(response.body.provider).toBe(expectedProvider);
     expect(response.body.command.type).toBe('trim_start');
     expect(response.body.timeline.tracks[0].clips[0].trimStart).toBe(1);
-  });
+  }, 30000);
+
+  it('verifies both Gemini credentials with independent real API calls', async () => {
+    if (!hasGemini) return;
+    const result = await verifyGeminiCredentials();
+    if (process.env.GEMINI_API_KEY) expect(result.GEMINI_API_KEY).toBe(true);
+    if (process.env.GEMINI_API_KEY_2) expect(result.GEMINI_API_KEY_2).toBe(true);
+  }, 60000);
+
+  it('verifies Gemini compound editing with a real API call', async () => {
+    if (!hasGemini) return;
+    const response = await request(app).post(`/api/projects/${projectId}/ai-plan`).send({
+      text: 'قص أول ثانية ثم زد السرعة إلى 1.5x',
+    });
+    expect(response.status).toBe(200);
+    expect(response.body.provider).toBe('gemini');
+    expect(response.body.dryRun).toBe(true);
+    expect(Array.isArray(response.body.plan.operations)).toBe(true);
+    expect(response.body.plan.operations.length).toBeGreaterThanOrEqual(2);
+    expect(response.body.plan.operations.map((operation: any) => operation.op)).toEqual(
+      expect.arrayContaining(['trim_clip', 'set_speed']),
+    );
+  }, 30000);
 
   it('supports split, undo and redo', async () => {
     const split = await request(app).post(`/api/projects/${projectId}/command`).send({ text: 'قسّم عند 2' });

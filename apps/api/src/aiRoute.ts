@@ -1,67 +1,60 @@
 import type { Express } from 'express';
 import type Database from 'better-sqlite3';
-import { randomUUID } from 'node:crypto';
-import { parseWithOpenAI, type EditCommand } from './aiProvider.js';
+import { applyOperations } from './editingEngine.js';
+import { planWithAI } from './aiProvider.js';
+
+function legacyCommand(operation: any, summary: string) {
+  if (!operation) return { type: 'noop', message: summary };
+  if (operation.op === 'trim_clip' && typeof operation.trimStart === 'number' && operation.trimEnd == null && !operation.args) {
+    return { type: 'trim_start', time: operation.trimStart, clipId: operation.clipId, message: summary };
+  }
+  return { type: operation.op, message: summary, ...operation };
+}
 
 export function registerAIRoute(app: Express, db: Database.Database) {
+  const runPlan = async (projectId: string, text: string) => {
+    const p: any = db.prepare('SELECT * FROM projects WHERE id=?').get(projectId);
+    if (!p) throw new Error('Project not found');
+    const timeline = JSON.parse(p.timeline_json);
+    const planned = await planWithAI(text, timeline);
+    const next = applyOperations(timeline, planned.plan.operations);
+    const changed = JSON.stringify(next) !== JSON.stringify(timeline);
+    if (changed) {
+      const history = JSON.parse(p.history_json).slice(0, Number(p.history_index) + 1);
+      history.push(next);
+      const bounded = history.slice(-100);
+      db.prepare('UPDATE projects SET timeline_json=?,history_json=?,history_index=?,updated_at=? WHERE id=?')
+        .run(JSON.stringify(next), JSON.stringify(bounded), bounded.length - 1, new Date().toISOString(), projectId);
+    }
+    return { timeline: changed ? next : timeline, plan: planned.plan, provider: planned.provider, changed };
+  };
+
   app.post('/api/projects/:id/ai-command', async (req, res) => {
     const projectId = String(req.params.id);
+    const text = String(req.body?.text || '').trim();
+    if (!text) return res.status(400).json({ error: 'Command text is required' });
+    try {
+      const result = await runPlan(projectId, text);
+      const first = result.plan.operations.find((operation: any) => operation.op !== 'noop');
+      res.json({ ...result, command: legacyCommand(first, result.plan.summary) });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'AI command failed';
+      res.status(message === 'Project not found' ? 404 : 500).json({ error: message });
+    }
+  });
+
+  app.post('/api/projects/:id/ai-plan', async (req, res) => {
+    const projectId = String(req.params.id);
+    const text = String(req.body?.text || '').trim();
+    if (!text) return res.status(400).json({ error: 'Command text is required' });
     const p: any = db.prepare('SELECT * FROM projects WHERE id=?').get(projectId);
     if (!p) return res.status(404).json({ error: 'Project not found' });
-
-    const timeline = JSON.parse(p.timeline_json);
-    const clips = timeline.tracks.find((t: any) => t.type === 'video')?.clips || [];
-    const clip = clips[0];
-    const fallback: EditCommand = { type: 'noop', message: 'لم أفهم الأمر بعد.' };
-    const command = await parseWithOpenAI(String(req.body?.text || ''), timeline, fallback);
-
-    if (command.type === 'noop') return res.json({ provider: 'local', command, timeline });
-
-    const out = structuredClone(timeline);
-    const track = out.tracks.find((t: any) => t.type === 'video');
-    const target = track?.clips?.find((c: any) => c.id === command.clipId) || track?.clips?.[0];
-    if (!target) return res.json({ provider: 'local', command, timeline });
-
-    if (command.type === 'split') {
-      const t = Number(command.time);
-      if (t > target.startTime && t < target.endTime) {
-        const second = structuredClone(target);
-        second.id = randomUUID();
-        second.startTime = t;
-        second.endTime = target.endTime;
-        second.duration = second.endTime - second.startTime;
-        target.endTime = t;
-        target.duration = t - target.startTime;
-        track.clips.splice(track.clips.indexOf(target), 1, target, second);
-      }
-    } else if (command.type === 'delete') {
-      track.clips = track.clips.filter((c: any) => c.id !== target.id);
-    } else if (command.type === 'move') {
-      const s = Math.max(0, Number(command.startTime || 0));
-      target.startTime = s;
-      target.endTime = s + target.duration;
-    } else if (command.type === 'trim_start') {
-      const s = Math.max(0, Number(command.time || 0));
-      if (s < target.trimEnd) {
-        const d = s - target.trimStart;
-        target.trimStart = s;
-        target.startTime = Math.max(0, target.startTime + d);
-        target.duration = Math.max(0.01, target.endTime - target.startTime);
-      }
-    } else if (command.type === 'trim_end') {
-      const e = Math.max(target.trimStart + 0.01, Number(command.time || target.trimEnd));
-      target.trimEnd = Math.min(e, target.trimEnd);
-      target.endTime = target.startTime + (target.trimEnd - target.trimStart);
-      target.duration = Math.max(0.01, target.endTime - target.startTime);
+    try {
+      const timeline = JSON.parse(p.timeline_json);
+      const planned = await planWithAI(text, timeline);
+      res.json({ provider: planned.provider, plan: planned.plan, dryRun: true });
+    } catch (error) {
+      res.status(500).json({ error: error instanceof Error ? error.message : 'AI planning failed' });
     }
-
-    out.duration = Math.max(0, ...out.tracks.flatMap((t: any) => t.clips.map((c: any) => c.endTime)));
-    const history = JSON.parse(p.history_json).slice(0, Number(p.history_index) + 1);
-    history.push(out);
-    const bounded = history.slice(-100);
-    db.prepare('UPDATE projects SET timeline_json=?,history_json=?,history_index=?,updated_at=? WHERE id=?')
-      .run(JSON.stringify(out), JSON.stringify(bounded), bounded.length - 1, new Date().toISOString(), projectId);
-
-    res.json({ provider: process.env.OPENAI_API_KEY ? 'openai' : 'local', command, timeline: out });
   });
 }

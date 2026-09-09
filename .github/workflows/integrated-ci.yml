@@ -2,12 +2,17 @@ name: integrated-mvp-ci
 
 on:
   push:
-    branches: [main, integration-mvp-1]
+    branches: [main, integration-mvp-1, commercial-ai-editor-foundation]
   pull_request:
 
 jobs:
   api:
     runs-on: ubuntu-latest
+    env:
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      GEMINI_API_KEY_2: ${{ secrets.GEMINI_API_KEY_2 }}
+      GEMINI_MODEL: gemini-3.5-flash-lite
+      GEMINI_FALLBACK_MODEL: gemini-3.6-flash
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -15,7 +20,10 @@ jobs:
           node-version: 22
           cache: npm
       - name: Install FFmpeg
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+        run: |
+          sudo grep -rl 'dl.google.com/linux/chrome' /etc/apt/sources.list.d 2>/dev/null | xargs -r sudo rm -f
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg
       - name: Install dependencies
         run: npm install
       - name: Build API

@@ -7,6 +7,7 @@ import { randomUUID } from 'node:crypto';
 import { extname, join, resolve, basename } from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { registerAIRoute } from './aiRoute.js';
+import { registerPublicAPIRoute } from './publicApiRoute.js';
 
 const ROOT = resolve(process.cwd(), '../..');
 const DATA = join(ROOT, 'data');
@@ -311,4 +312,5 @@ app.post('/api/projects/:id/render', (req, res) => {
 });
 
 registerAIRoute(app, db);
+registerPublicAPIRoute(app, db);
 if (process.env.NODE_ENV !== 'test') app.listen(Number(process.env.PORT || 8787), () => console.log('AI Creative Studio API listening on 8787'));
