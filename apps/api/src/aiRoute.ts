@@ -27,7 +27,8 @@ export function registerAIRoute(app: Express, db: Database.Database) {
     if (!text) return res.status(400).json({ error: 'Command text is required' });
     try {
       const result = await runPlan(projectId, text);
-      res.json({ provider: process.env.OPENAI_API_KEY ? 'openai' : 'local', ...result });
+      const first = result.plan.operations.find((operation: any) => operation.op !== 'noop');
+      res.json({ provider: process.env.OPENAI_API_KEY ? 'openai' : 'local', command: first ? { type: first.op, message: result.plan.summary, ...first } : { type: 'noop', message: result.plan.summary }, ...result });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'AI command failed';
       res.status(message === 'Project not found' ? 404 : 500).json({ error: message });
