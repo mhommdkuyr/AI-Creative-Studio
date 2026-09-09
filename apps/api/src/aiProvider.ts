@@ -74,14 +74,22 @@ function cleanPlan(raw: any, timeline: any): EditPlan {
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-async function callGeminiModel(model: string, text: string, timeline: any): Promise<EditPlan | null> {
-  const key = process.env.GEMINI_API_KEY; if (!key) return null;
+type GeminiCredential = { name: 'GEMINI_API_KEY' | 'GEMINI_API_KEY_2'; value: string };
+
+function getGeminiCredentials(): GeminiCredential[] {
+  const credentials: GeminiCredential[] = [];
+  if (process.env.GEMINI_API_KEY) credentials.push({ name: 'GEMINI_API_KEY', value: process.env.GEMINI_API_KEY });
+  if (process.env.GEMINI_API_KEY_2) credentials.push({ name: 'GEMINI_API_KEY_2', value: process.env.GEMINI_API_KEY_2 });
+  return credentials;
+}
+
+async function callGeminiModel(model: string, text: string, timeline: any, credential: GeminiCredential): Promise<EditPlan | null> {
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 15000);
     try {
       const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
-        method: 'POST', headers: { 'content-type': 'application/json', 'x-goog-api-key': key }, signal: controller.signal,
+        method: 'POST', headers: { 'content-type': 'application/json', 'x-goog-api-key': credential.value }, signal: controller.signal,
         body: JSON.stringify({
           systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
           contents: [{ role: 'user', parts: [{ text: `TIMELINE=${timelineContext(timeline)}\nREQUEST=${text}` }] }],
@@ -93,14 +101,17 @@ async function callGeminiModel(model: string, text: string, timeline: any): Prom
       if (response.ok) {
         const data: any = await response.json(); const parts = data?.candidates?.[0]?.content?.parts || [];
         const call = parts.find((part: any) => part?.functionCall?.name === geminiTool.name);
-        if (call?.functionCall?.args) return cleanPlan(call.functionCall.args, timeline);
-        console.error(`[gemini] ${model} returned no function call`); return null;
+        if (call?.functionCall?.args) {
+          console.log(`[gemini] success credential=${credential.name} model=${model}`);
+          return cleanPlan(call.functionCall.args, timeline);
+        }
+        console.error(`[gemini] ${credential.name} ${model} returned no function call`); return null;
       }
-      const body = await response.text(); console.error(`[gemini] ${model} HTTP ${response.status}: ${body.slice(0, 700)}`);
+      const body = await response.text(); console.error(`[gemini] ${credential.name} ${model} HTTP ${response.status}: ${body.slice(0, 700)}`);
       if (response.status !== 429 && response.status !== 503) return null;
       if (attempt === 0) await sleep(500);
     } catch (error) {
-      console.error(`[gemini] ${model} request error`, error instanceof Error ? error.message : String(error));
+      console.error(`[gemini] ${credential.name} ${model} request error`, error instanceof Error ? error.message : String(error));
       if (attempt === 0) await sleep(500);
     } finally { clearTimeout(timeout); }
   }
@@ -108,13 +119,37 @@ async function callGeminiModel(model: string, text: string, timeline: any): Prom
 }
 
 async function planWithGemini(text: string, timeline: any): Promise<EditPlan | null> {
+  const credentials = getGeminiCredentials();
+  if (!credentials.length) return null;
   const configured = process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite';
   const fallback = process.env.GEMINI_FALLBACK_MODEL || 'gemini-3.6-flash';
-  for (const model of [...new Set([configured, fallback])]) {
-    const plan = await callGeminiModel(model, text, timeline);
-    if (plan) return plan;
+  for (const credential of credentials) {
+    for (const model of [...new Set([configured, fallback])]) {
+      const plan = await callGeminiModel(model, text, timeline, credential);
+      if (plan) return plan;
+    }
   }
   return null;
+}
+
+export async function verifyGeminiCredentials(): Promise<Record<'GEMINI_API_KEY' | 'GEMINI_API_KEY_2', boolean | null>> {
+  const credentials = getGeminiCredentials();
+  const result: Record<'GEMINI_API_KEY' | 'GEMINI_API_KEY_2', boolean | null> = {
+    GEMINI_API_KEY: process.env.GEMINI_API_KEY ? false : null,
+    GEMINI_API_KEY_2: process.env.GEMINI_API_KEY_2 ? false : null,
+  };
+  const configured = process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite';
+  const fallback = process.env.GEMINI_FALLBACK_MODEL || 'gemini-3.6-flash';
+  for (const credential of credentials) {
+    for (const model of [...new Set([configured, fallback])]) {
+      const plan = await callGeminiModel(model, 'اختبار اتصال: أنشئ خطة لا تعدل شيئًا باستثناء noop.', { tracks: [] }, credential);
+      if (plan) {
+        result[credential.name] = true;
+        break;
+      }
+    }
+  }
+  return result;
 }
 
 async function planWithOpenAIProvider(text: string, timeline: any): Promise<EditPlan | null> {
