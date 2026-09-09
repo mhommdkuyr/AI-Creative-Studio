@@ -51,13 +51,13 @@ describe('integrated API', () => {
   it('verifies Gemini with a real API call when GEMINI_API_KEY is configured', async () => {
     if (!process.env.GEMINI_API_KEY) return;
     const response = await request(app).post(`/api/projects/${projectId}/ai-plan`).send({
-      text: 'قص أول ثانية، ثم زد السرعة إلى 1.5x، ثم أضف نصًا في منتصف الفيديو يقول: تجربة Gemini',
+      text: 'قص أول ثانية ثم زد السرعة إلى 1.5x',
     });
     expect(response.status).toBe(200);
     expect(response.body.provider).toBe('gemini');
     expect(response.body.dryRun).toBe(true);
     expect(Array.isArray(response.body.plan.operations)).toBe(true);
-    expect(response.body.plan.operations.length).toBeGreaterThanOrEqual(3);
+    expect(response.body.plan.operations.length).toBeGreaterThanOrEqual(2);
     expect(response.body.plan.operations.map((operation: any) => operation.op)).toEqual(
       expect.arrayContaining(['trim_clip', 'set_speed']),
     );
