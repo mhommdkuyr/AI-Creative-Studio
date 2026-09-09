@@ -20,18 +20,41 @@ const operationProperties = {
   volume: { type: ['number', 'null'] },
   muted: { type: ['boolean', 'null'] },
   opacity: { type: ['number', 'null'] },
-  x: { type: ['number', 'null'] }, y: { type: ['number', 'null'] },
-  scaleX: { type: ['number', 'null'] }, scaleY: { type: ['number', 'null'] },
-  rotation: { type: ['number', 'null'] }, anchorX: { type: ['number', 'null'] }, anchorY: { type: ['number', 'null'] },
-  left: { type: ['number', 'null'] }, top: { type: ['number', 'null'] }, right: { type: ['number', 'null'] }, bottom: { type: ['number', 'null'] },
-  mode: { type: ['string', 'null'] }, text: { type: ['string', 'null'] }, duration: { type: ['number', 'null'] },
-  style: { type: ['object', 'null'] }, label: { type: ['string', 'null'] }, color: { type: ['string', 'null'] },
-  effect: { type: ['string', 'null'] }, params: { type: ['object', 'null'] }, property: { type: ['string', 'null'] },
-  value: {}, fromClipId: { type: ['string', 'null'] }, toClipId: { type: ['string', 'null'] },
-  transitionType: { type: ['string', 'null'] }, fps: { type: ['number', 'null'] }, width: { type: ['number', 'null'] },
-  height: { type: ['number', 'null'] }, aspectRatio: { type: ['string', 'null'] }, order: { type: ['number', 'null'] },
-  name: { type: ['string', 'null'] }, locked: { type: ['boolean', 'null'] }, visible: { type: ['boolean', 'null'] },
-  reason: { type: ['string', 'null'] }, enabled: { type: ['boolean', 'null'] }, count: { type: ['number', 'null'] },
+  x: { type: ['number', 'null'] },
+  y: { type: ['number', 'null'] },
+  scaleX: { type: ['number', 'null'] },
+  scaleY: { type: ['number', 'null'] },
+  rotation: { type: ['number', 'null'] },
+  anchorX: { type: ['number', 'null'] },
+  anchorY: { type: ['number', 'null'] },
+  left: { type: ['number', 'null'] },
+  top: { type: ['number', 'null'] },
+  right: { type: ['number', 'null'] },
+  bottom: { type: ['number', 'null'] },
+  mode: { type: ['string', 'null'] },
+  text: { type: ['string', 'null'] },
+  duration: { type: ['number', 'null'] },
+  style: { type: ['object', 'null'] },
+  label: { type: ['string', 'null'] },
+  color: { type: ['string', 'null'] },
+  effect: { type: ['string', 'null'] },
+  params: { type: ['object', 'null'] },
+  property: { type: ['string', 'null'] },
+  value: {},
+  fromClipId: { type: ['string', 'null'] },
+  toClipId: { type: ['string', 'null'] },
+  transitionType: { type: ['string', 'null'] },
+  fps: { type: ['number', 'null'] },
+  width: { type: ['number', 'null'] },
+  height: { type: ['number', 'null'] },
+  aspectRatio: { type: ['string', 'null'] },
+  order: { type: ['number', 'null'] },
+  name: { type: ['string', 'null'] },
+  locked: { type: ['boolean', 'null'] },
+  visible: { type: ['boolean', 'null'] },
+  reason: { type: ['string', 'null'] },
+  enabled: { type: ['boolean', 'null'] },
+  count: { type: ['number', 'null'] },
 };
 
 const tool = {
@@ -46,20 +69,57 @@ const tool = {
       version: { type: 'integer', enum: [1] },
       summary: { type: 'string' },
       operations: {
-        type: 'array', minItems: 1, maxItems: 100,
-        items: { type: 'object', additionalProperties: false, required: ['op'], properties: operationProperties },
+        type: 'array',
+        minItems: 1,
+        maxItems: 100,
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['op'],
+          properties: operationProperties,
+        },
       },
     },
   },
   strict: true,
 };
 
+const geminiTool = {
+  name: tool.name,
+  description: tool.description,
+  parameters: tool.parameters,
+};
+
+const SYSTEM_PROMPT = 'You are the deterministic editing director for a professional nonlinear video editor. Convert each user request into an ordered executable plan. Handle arbitrarily compound instructions by decomposing them into explicit supported operations. Preserve intent, use exact asset/clip/track IDs from the supplied timeline, prefer args for operation-specific parameters, and never invent media IDs. When a capability requires asynchronous analysis or rendering, emit its dedicated operation so the job system can execute it; never silently replace a requested capability with noop.';
+
 function activeClips(timeline: any) {
-  return (timeline?.tracks || []).flatMap((track: any) => (track.clips || []).map((clip: any) => ({
-    id: clip.id, type: clip.type || track.type, name: clip.name, startTime: clip.startTime, endTime: clip.endTime,
-    duration: clip.duration, trimStart: clip.trimStart, trimEnd: clip.trimEnd, speed: clip.speed, volume: clip.volume,
-    text: clip.text, trackId: track.id, trackType: track.type,
-  })));
+  return (timeline?.tracks || []).flatMap((track: any) =>
+    (track.clips || []).map((clip: any) => ({
+      id: clip.id,
+      type: clip.type || track.type,
+      name: clip.name,
+      startTime: clip.startTime,
+      endTime: clip.endTime,
+      duration: clip.duration,
+      trimStart: clip.trimStart,
+      trimEnd: clip.trimEnd,
+      speed: clip.speed,
+      volume: clip.volume,
+      text: clip.text,
+      trackId: track.id,
+      trackType: track.type,
+    })),
+  );
+}
+
+function timelineContext(timeline: any) {
+  return JSON.stringify({
+    duration: timeline?.duration || 0,
+    fps: timeline?.fps,
+    width: timeline?.width,
+    height: timeline?.height,
+    tracks: activeClips(timeline),
+  });
 }
 
 function firstLocalPlan(text: string, timeline: any): EditPlan {
@@ -90,10 +150,42 @@ function cleanPlan(raw: any, timeline: any): EditPlan {
   } as EditPlan;
 }
 
-export async function planWithOpenAI(text: string, timeline: any): Promise<EditPlan> {
-  const local = firstLocalPlan(text, timeline);
+async function planWithGemini(text: string, timeline: any): Promise<EditPlan | null> {
+  const key = process.env.GEMINI_API_KEY;
+  if (!key) return null;
+  const model = process.env.GEMINI_MODEL || 'gemini-3.8-flash';
+  try {
+    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-goog-api-key': key,
+      },
+      body: JSON.stringify({
+        systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
+        contents: [{
+          role: 'user',
+          parts: [{ text: `TIMELINE=${timelineContext(timeline)}\nREQUEST=${text}` }],
+        }],
+        tools: [{ functionDeclarations: [geminiTool] }],
+        toolConfig: { functionCallingConfig: { mode: 'ANY', allowedFunctionNames: [geminiTool.name] } },
+        generationConfig: { temperature: 0 },
+      }),
+    });
+    if (!response.ok) return null;
+    const data: any = await response.json();
+    const parts = data?.candidates?.[0]?.content?.parts || [];
+    const call = parts.find((part: any) => part?.functionCall?.name === geminiTool.name);
+    if (!call?.functionCall?.args) return null;
+    return cleanPlan(call.functionCall.args, timeline);
+  } catch {
+    return null;
+  }
+}
+
+async function planWithOpenAIProvider(text: string, timeline: any): Promise<EditPlan | null> {
   const key = process.env.OPENAI_API_KEY;
-  if (!key) return local;
+  if (!key) return null;
   const model = process.env.OPENAI_MODEL || 'gpt-5.6-sol';
   try {
     const response = await fetch('https://api.openai.com/v1/responses', {
@@ -102,21 +194,36 @@ export async function planWithOpenAI(text: string, timeline: any): Promise<EditP
       body: JSON.stringify({
         model,
         input: [
-          { role: 'system', content: [{ type: 'input_text', text: 'You are the deterministic editing director for a professional nonlinear video editor. Convert each user request into an ordered executable plan. Handle arbitrarily compound instructions by decomposing them into explicit supported operations. Preserve intent, use exact asset/clip/track IDs from the supplied timeline, prefer args for operation-specific parameters, and never invent media IDs. When a capability requires asynchronous analysis or rendering, emit its dedicated operation so the job system can execute it; never silently replace a requested capability with noop.' }] },
-          { role: 'user', content: [{ type: 'input_text', text: `TIMELINE=${JSON.stringify({ duration: timeline?.duration || 0, fps: timeline?.fps, width: timeline?.width, height: timeline?.height, tracks: activeClips(timeline) })}\nREQUEST=${text}` }] },
+          { role: 'system', content: [{ type: 'input_text', text: SYSTEM_PROMPT }] },
+          { role: 'user', content: [{ type: 'input_text', text: `TIMELINE=${timelineContext(timeline)}\nREQUEST=${text}` }] },
         ],
         tools: [tool],
-        tool_choice: { type: 'function', name: 'apply_edit_operations' },
+        tool_choice: { type: 'function', name: tool.name },
       }),
     });
-    if (!response.ok) return local;
+    if (!response.ok) return null;
     const data: any = await response.json();
-    const call = (data.output || []).find((item: any) => item.type === 'function_call' && item.name === 'apply_edit_operations');
-    if (!call) return local;
+    const call = (data.output || []).find((item: any) => item.type === 'function_call' && item.name === tool.name);
+    if (!call) return null;
     return cleanPlan(JSON.parse(call.arguments || '{}'), timeline);
   } catch {
-    return local;
+    return null;
   }
+}
+
+export function getAIProvider(): 'gemini' | 'openai' | 'local' {
+  if (process.env.GEMINI_API_KEY) return 'gemini';
+  if (process.env.OPENAI_API_KEY) return 'openai';
+  return 'local';
+}
+
+export async function planWithOpenAI(text: string, timeline: any): Promise<EditPlan> {
+  const local = firstLocalPlan(text, timeline);
+  const gemini = await planWithGemini(text, timeline);
+  if (gemini) return gemini;
+  const openai = await planWithOpenAIProvider(text, timeline);
+  if (openai) return openai;
+  return local;
 }
 
 export async function parseWithOpenAI(text: string, timeline: any, fallback: any) {
