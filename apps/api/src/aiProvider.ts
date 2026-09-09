@@ -7,9 +7,7 @@ const DEFAULT_PLAN: EditPlan = {
 };
 
 const operationProperties = {
-  op: { type: 'string', enum: EDITING_OPERATION_NAMES },
-  args: { type: 'object', additionalProperties: true },
-  clipId: { type: ['string', 'null'] }, trackId: { type: ['string', 'null'] }, time: { type: ['number', 'null'] }, startTime: { type: ['number', 'null'] }, offset: { type: ['number', 'null'] },
+  op: { type: 'string', enum: EDITING_OPERATION_NAMES }, args: { type: 'object', additionalProperties: true }, clipId: { type: ['string', 'null'] }, trackId: { type: ['string', 'null'] }, time: { type: ['number', 'null'] }, startTime: { type: ['number', 'null'] }, offset: { type: ['number', 'null'] },
   trimStart: { type: ['number', 'null'] }, trimEnd: { type: ['number', 'null'] }, speed: { type: ['number', 'null'] }, volume: { type: ['number', 'null'] }, muted: { type: ['boolean', 'null'] }, opacity: { type: ['number', 'null'] },
   x: { type: ['number', 'null'] }, y: { type: ['number', 'null'] }, scaleX: { type: ['number', 'null'] }, scaleY: { type: ['number', 'null'] }, rotation: { type: ['number', 'null'] }, anchorX: { type: ['number', 'null'] }, anchorY: { type: ['number', 'null'] },
   left: { type: ['number', 'null'] }, top: { type: ['number', 'null'] }, right: { type: ['number', 'null'] }, bottom: { type: ['number', 'null'] }, mode: { type: ['string', 'null'] }, text: { type: ['string', 'null'] }, duration: { type: ['number', 'null'] },
@@ -52,9 +50,7 @@ const geminiTool = {
 
 const SYSTEM_PROMPT = 'You are the deterministic editing director for a professional nonlinear video editor. Convert each user request into an ordered executable plan. Handle arbitrarily compound instructions by decomposing them into explicit supported operations. Preserve intent, use exact asset/clip/track IDs from the supplied timeline, prefer operation fields for parameters, and never invent media IDs. When a capability requires asynchronous analysis or rendering, emit its dedicated operation so the job system can execute it; never silently replace a requested capability with noop.';
 
-function activeClips(timeline: any) {
-  return (timeline?.tracks || []).flatMap((track: any) => (track.clips || []).map((clip: any) => ({ id: clip.id, type: clip.type || track.type, name: clip.name, startTime: clip.startTime, endTime: clip.endTime, duration: clip.duration, trimStart: clip.trimStart, trimEnd: clip.trimEnd, speed: clip.speed, volume: clip.volume, text: clip.text, trackId: track.id, trackType: track.type })));
-}
+function activeClips(timeline: any) { return (timeline?.tracks || []).flatMap((track: any) => (track.clips || []).map((clip: any) => ({ id: clip.id, type: clip.type || track.type, name: clip.name, startTime: clip.startTime, endTime: clip.endTime, duration: clip.duration, trimStart: clip.trimStart, trimEnd: clip.trimEnd, speed: clip.speed, volume: clip.volume, text: clip.text, trackId: track.id, trackType: track.type }))); }
 function timelineContext(timeline: any) { return JSON.stringify({ duration: timeline?.duration || 0, fps: timeline?.fps, width: timeline?.width, height: timeline?.height, tracks: activeClips(timeline) }); }
 
 function firstLocalPlan(text: string, timeline: any): EditPlan {
@@ -75,15 +71,53 @@ function cleanPlan(raw: any, timeline: any): EditPlan {
   return { version: 1, summary: String(raw?.summary || 'تم بناء خطة المونتاج.'), operations: operations.length ? operations : [{ op: 'noop', reason: 'The model returned no operations.' }] } as EditPlan;
 }
 
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+async function callGeminiModel(model: string, text: string, timeline: any): Promise<EditPlan | null> {
+  const key = process.env.GEMINI_API_KEY;
+  if (!key) return null;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-goog-api-key': key },
+        body: JSON.stringify({
+          systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
+          contents: [{ role: 'user', parts: [{ text: `TIMELINE=${timelineContext(timeline)}\nREQUEST=${text}` }] }],
+          tools: [{ functionDeclarations: [geminiTool] }],
+          toolConfig: { functionCallingConfig: { mode: 'ANY', allowedFunctionNames: [geminiTool.name] } },
+          generationConfig: { temperature: 0 },
+        }),
+      });
+      if (response.ok) {
+        const data: any = await response.json();
+        const parts = data?.candidates?.[0]?.content?.parts || [];
+        const call = parts.find((part: any) => part?.functionCall?.name === geminiTool.name);
+        if (call?.functionCall?.args) return cleanPlan(call.functionCall.args, timeline);
+        console.error(`[gemini] ${model} returned no function call`);
+        return null;
+      }
+      const body = await response.text();
+      console.error(`[gemini] ${model} HTTP ${response.status}: ${body.slice(0, 700)}`);
+      if (response.status !== 429 && response.status !== 503) return null;
+      if (attempt === 0) await sleep(350);
+    } catch (error) {
+      console.error(`[gemini] ${model} request error`, error instanceof Error ? error.message : String(error));
+      if (attempt === 0) await sleep(350);
+    }
+  }
+  return null;
+}
+
 async function planWithGemini(text: string, timeline: any): Promise<EditPlan | null> {
-  const key = process.env.GEMINI_API_KEY; if (!key) return null; const model = process.env.GEMINI_MODEL || 'gemini-3.8-flash';
-  try {
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-goog-api-key': key }, body: JSON.stringify({ systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] }, contents: [{ role: 'user', parts: [{ text: `TIMELINE=${timelineContext(timeline)}\nREQUEST=${text}` }] }], tools: [{ functionDeclarations: [geminiTool] }], toolConfig: { functionCallingConfig: { mode: 'ANY', allowedFunctionNames: [geminiTool.name] } }, generationConfig: { temperature: 0 } }) });
-    if (!response.ok) { const body = await response.text(); console.error(`[gemini] HTTP ${response.status}: ${body.slice(0, 700)}`); return null; }
-    const data: any = await response.json(); const parts = data?.candidates?.[0]?.content?.parts || []; const call = parts.find((part: any) => part?.functionCall?.name === geminiTool.name);
-    if (!call?.functionCall?.args) { console.error('[gemini] no function call returned'); return null; }
-    return cleanPlan(call.functionCall.args, timeline);
-  } catch (error) { console.error('[gemini] request error', error instanceof Error ? error.message : String(error)); return null; }
+  const configured = process.env.GEMINI_MODEL || 'gemini-3.7-flash';
+  const fallback = process.env.GEMINI_FALLBACK_MODEL || 'gemini-2.5-flash';
+  const models = [...new Set([configured, fallback])];
+  for (const model of models) {
+    const plan = await callGeminiModel(model, text, timeline);
+    if (plan) return plan;
+  }
+  return null;
 }
 
 async function planWithOpenAIProvider(text: string, timeline: any): Promise<EditPlan | null> {
