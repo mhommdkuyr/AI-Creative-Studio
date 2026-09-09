@@ -4,11 +4,13 @@ import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { app, db } from './server.js';
+import { verifyGeminiCredentials } from './aiProvider.js';
 
 let projectId = '';
 const fixture = join(tmpdir(), 'ai-creative-studio-test.mp4');
 
-const expectedProvider = process.env.GEMINI_API_KEY ? 'gemini' : process.env.OPENAI_API_KEY ? 'openai' : 'local';
+const hasGemini = Boolean(process.env.GEMINI_API_KEY || process.env.GEMINI_API_KEY_2);
+const expectedProvider = hasGemini ? 'gemini' : process.env.OPENAI_API_KEY ? 'openai' : 'local';
 
 describe('integrated API', () => {
   beforeAll(() => {
@@ -48,8 +50,15 @@ describe('integrated API', () => {
     expect(response.body.timeline.tracks[0].clips[0].trimStart).toBe(1);
   }, 30000);
 
-  it('verifies Gemini with a real API call when GEMINI_API_KEY is configured', async () => {
-    if (!process.env.GEMINI_API_KEY) return;
+  it('verifies both Gemini credentials with independent real API calls', async () => {
+    if (!hasGemini) return;
+    const result = await verifyGeminiCredentials();
+    if (process.env.GEMINI_API_KEY) expect(result.GEMINI_API_KEY).toBe(true);
+    if (process.env.GEMINI_API_KEY_2) expect(result.GEMINI_API_KEY_2).toBe(true);
+  }, 60000);
+
+  it('verifies Gemini compound editing with a real API call', async () => {
+    if (!hasGemini) return;
     const response = await request(app).post(`/api/projects/${projectId}/ai-plan`).send({
       text: 'قص أول ثانية ثم زد السرعة إلى 1.5x',
     });
