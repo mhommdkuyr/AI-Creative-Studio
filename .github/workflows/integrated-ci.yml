@@ -10,7 +10,8 @@ jobs:
     runs-on: ubuntu-latest
     env:
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-      GEMINI_MODEL: gemini-3.8-flash
+      GEMINI_MODEL: gemini-3.7-flash
+      GEMINI_FALLBACK_MODEL: gemini-2.5-flash
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
