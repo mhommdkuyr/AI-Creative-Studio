@@ -3,6 +3,14 @@ import type Database from 'better-sqlite3';
 import { applyOperations } from './editingEngine.js';
 import { planWithOpenAI } from './aiProvider.js';
 
+function legacyCommand(operation: any, summary: string) {
+  if (!operation) return { type: 'noop', message: summary };
+  if (operation.op === 'trim_clip' && typeof operation.trimStart === 'number' && operation.trimEnd == null && !operation.args) {
+    return { type: 'trim_start', time: operation.trimStart, clipId: operation.clipId, message: summary };
+  }
+  return { type: operation.op, message: summary, ...operation };
+}
+
 export function registerAIRoute(app: Express, db: Database.Database) {
   const runPlan = async (projectId: string, text: string) => {
     const p: any = db.prepare('SELECT * FROM projects WHERE id=?').get(projectId);
@@ -28,7 +36,7 @@ export function registerAIRoute(app: Express, db: Database.Database) {
     try {
       const result = await runPlan(projectId, text);
       const first = result.plan.operations.find((operation: any) => operation.op !== 'noop');
-      res.json({ provider: process.env.OPENAI_API_KEY ? 'openai' : 'local', command: first ? { type: first.op, message: result.plan.summary, ...first } : { type: 'noop', message: result.plan.summary }, ...result });
+      res.json({ provider: process.env.OPENAI_API_KEY ? 'openai' : 'local', command: legacyCommand(first, result.plan.summary), ...result });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'AI command failed';
       res.status(message === 'Project not found' ? 404 : 500).json({ error: message });
