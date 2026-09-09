@@ -78,9 +78,12 @@ async function callGeminiModel(model: string, text: string, timeline: any): Prom
   if (!key) return null;
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 4000);
       const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
         method: 'POST',
         headers: { 'content-type': 'application/json', 'x-goog-api-key': key },
+        signal: controller.signal,
         body: JSON.stringify({
           systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
           contents: [{ role: 'user', parts: [{ text: `TIMELINE=${timelineContext(timeline)}\nREQUEST=${text}` }] }],
@@ -89,6 +92,7 @@ async function callGeminiModel(model: string, text: string, timeline: any): Prom
           generationConfig: { temperature: 0 },
         }),
       });
+      clearTimeout(timeout);
       if (response.ok) {
         const data: any = await response.json();
         const parts = data?.candidates?.[0]?.content?.parts || [];
@@ -100,20 +104,19 @@ async function callGeminiModel(model: string, text: string, timeline: any): Prom
       const body = await response.text();
       console.error(`[gemini] ${model} HTTP ${response.status}: ${body.slice(0, 700)}`);
       if (response.status !== 429 && response.status !== 503) return null;
-      if (attempt === 0) await sleep(350);
+      if (attempt === 0) await sleep(250);
     } catch (error) {
       console.error(`[gemini] ${model} request error`, error instanceof Error ? error.message : String(error));
-      if (attempt === 0) await sleep(350);
+      if (attempt === 0) await sleep(250);
     }
   }
   return null;
 }
 
 async function planWithGemini(text: string, timeline: any): Promise<EditPlan | null> {
-  const configured = process.env.GEMINI_MODEL || 'gemini-3.7-flash';
+  const configured = process.env.GEMINI_MODEL || 'gemini-2.5-flash-lite';
   const fallback = process.env.GEMINI_FALLBACK_MODEL || 'gemini-2.5-flash';
-  const models = [...new Set([configured, fallback])];
-  for (const model of models) {
+  for (const model of [...new Set([configured, fallback])]) {
     const plan = await callGeminiModel(model, text, timeline);
     if (plan) return plan;
   }
