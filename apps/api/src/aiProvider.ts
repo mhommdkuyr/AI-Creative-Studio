@@ -69,15 +69,8 @@ const tool = {
       version: { type: 'integer', enum: [1] },
       summary: { type: 'string' },
       operations: {
-        type: 'array',
-        minItems: 1,
-        maxItems: 100,
-        items: {
-          type: 'object',
-          additionalProperties: false,
-          required: ['op'],
-          properties: operationProperties,
-        },
+        type: 'array', minItems: 1, maxItems: 100,
+        items: { type: 'object', additionalProperties: false, required: ['op'], properties: operationProperties },
       },
     },
   },
@@ -95,19 +88,9 @@ const SYSTEM_PROMPT = 'You are the deterministic editing director for a professi
 function activeClips(timeline: any) {
   return (timeline?.tracks || []).flatMap((track: any) =>
     (track.clips || []).map((clip: any) => ({
-      id: clip.id,
-      type: clip.type || track.type,
-      name: clip.name,
-      startTime: clip.startTime,
-      endTime: clip.endTime,
-      duration: clip.duration,
-      trimStart: clip.trimStart,
-      trimEnd: clip.trimEnd,
-      speed: clip.speed,
-      volume: clip.volume,
-      text: clip.text,
-      trackId: track.id,
-      trackType: track.type,
+      id: clip.id, type: clip.type || track.type, name: clip.name, startTime: clip.startTime, endTime: clip.endTime,
+      duration: clip.duration, trimStart: clip.trimStart, trimEnd: clip.trimEnd, speed: clip.speed, volume: clip.volume,
+      text: clip.text, trackId: track.id, trackType: track.type,
     })),
   );
 }
@@ -157,16 +140,10 @@ async function planWithGemini(text: string, timeline: any): Promise<EditPlan | n
   try {
     const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
       method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'x-goog-api-key': key,
-      },
+      headers: { 'content-type': 'application/json', 'x-goog-api-key': key },
       body: JSON.stringify({
         systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
-        contents: [{
-          role: 'user',
-          parts: [{ text: `TIMELINE=${timelineContext(timeline)}\nREQUEST=${text}` }],
-        }],
+        contents: [{ role: 'user', parts: [{ text: `TIMELINE=${timelineContext(timeline)}\nREQUEST=${text}` }] }],
         tools: [{ functionDeclarations: [geminiTool] }],
         toolConfig: { functionCallingConfig: { mode: 'ANY', allowedFunctionNames: [geminiTool.name] } },
         generationConfig: { temperature: 0 },
@@ -211,19 +188,16 @@ async function planWithOpenAIProvider(text: string, timeline: any): Promise<Edit
   }
 }
 
-export function getAIProvider(): 'gemini' | 'openai' | 'local' {
-  if (process.env.GEMINI_API_KEY) return 'gemini';
-  if (process.env.OPENAI_API_KEY) return 'openai';
-  return 'local';
+export async function planWithAI(text: string, timeline: any): Promise<{ plan: EditPlan; provider: 'gemini' | 'openai' | 'local' }> {
+  const gemini = await planWithGemini(text, timeline);
+  if (gemini) return { plan: gemini, provider: 'gemini' };
+  const openai = await planWithOpenAIProvider(text, timeline);
+  if (openai) return { plan: openai, provider: 'openai' };
+  return { plan: firstLocalPlan(text, timeline), provider: 'local' };
 }
 
 export async function planWithOpenAI(text: string, timeline: any): Promise<EditPlan> {
-  const local = firstLocalPlan(text, timeline);
-  const gemini = await planWithGemini(text, timeline);
-  if (gemini) return gemini;
-  const openai = await planWithOpenAIProvider(text, timeline);
-  if (openai) return openai;
-  return local;
+  return (await planWithAI(text, timeline)).plan;
 }
 
 export async function parseWithOpenAI(text: string, timeline: any, fallback: any) {
