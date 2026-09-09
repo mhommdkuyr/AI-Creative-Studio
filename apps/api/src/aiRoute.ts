@@ -36,7 +36,7 @@ export function registerAIRoute(app: Express, db: Database.Database) {
     try {
       const result = await runPlan(projectId, text);
       const first = result.plan.operations.find((operation: any) => operation.op !== 'noop');
-      res.json({ provider: result.provider, command: legacyCommand(first, result.plan.summary), ...result });
+      res.json({ ...result, command: legacyCommand(first, result.plan.summary) });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'AI command failed';
       res.status(message === 'Project not found' ? 404 : 500).json({ error: message });
