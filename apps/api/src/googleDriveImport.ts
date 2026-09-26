@@ -151,7 +151,6 @@ export function probeMedia(path: string, mime = 'video/mp4'): ProbedMedia {
     throw new GoogleDriveImportError('Downloaded file is not a valid playable video', 'invalid_video_file', 422);
   }
 
-  const size = Number(metadata.format?.size || stat(path).then?.length || 0);
   return {
     duration,
     width,
