@@ -328,7 +328,20 @@ app.post('/api/projects/:id/import/google-drive', async (req, res) => {
       throw error;
     }
 
-    res.status(201).json(payload(projectId));
+    res.status(201).json({
+      ...payload(projectId),
+      importedMedia: {
+        fileId: imported.fileId,
+        name: imported.name,
+        mime: imported.mime,
+        size: imported.size,
+        duration: imported.duration,
+        width: imported.width,
+        height: imported.height,
+        videoCodec: imported.videoCodec,
+        audioCodec: imported.audioCodec,
+      },
+    });
   } catch (error) {
     const driveError = error instanceof GoogleDriveImportError ? error : new GoogleDriveImportError(
       error instanceof Error ? error.message : 'Google Drive project import failed',
