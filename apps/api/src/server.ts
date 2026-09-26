@@ -230,6 +230,7 @@ function renderTimelineToFile(projectId: string, timeline: any) {
     const sourceDuration = Math.max(0.01, Number(clip.trimEnd) - Number(clip.trimStart));
     const speed = Math.max(0.25, Math.min(4, Number(clip.speed || 1)));
     const outputDuration = sourceDuration / speed;
+    const streamIndex = inputIndex;
     inputs.push('-ss', String(Math.max(0, Number(clip.trimStart || 0))), '-t', String(sourceDuration), '-i', asset.path);
 
     const zoom = Math.max(1, Math.min(1.18, Number(clip.transform?.scaleX || 1)));
@@ -238,7 +239,7 @@ function renderTimelineToFile(projectId: string, timeline: any) {
     const contrast = Math.max(0.85, Math.min(1.25, Number(clip.color?.set_color_adjustments?.contrast ?? 1)));
     const saturation = Math.max(0.7, Math.min(1.35, Number(clip.color?.set_color_adjustments?.saturation ?? 1)));
     const exposure = Math.max(-0.15, Math.min(0.15, Number(clip.color?.set_color_adjustments?.exposure ?? 0) * 0.12));
-    let vf = '[' + inputIndex + ':v:0]setpts=PTS-STARTPTS,scale=' + targetW + ':' + targetH + ':force_original_aspect_ratio=increase,crop=' + targetW + ':' + targetH;
+    let vf = '[' + streamIndex + ':v:0]setpts=PTS-STARTPTS,scale=' + targetW + ':' + targetH + ':force_original_aspect_ratio=increase,crop=' + targetW + ':' + targetH;
     if (zoom > 1.001) vf += ',scale=' + scaledW + ':' + scaledH + ',crop=' + targetW + ':' + targetH + ':(iw-' + targetW + ')/2:(ih-' + targetH + ')/2';
     if (speed !== 1) vf += ',setpts=PTS/' + speed.toFixed(4);
     vf += ',fps=' + fps + ',eq=contrast=' + contrast.toFixed(3) + ':saturation=' + saturation.toFixed(3) + ':brightness=' + exposure.toFixed(3) + ',setsar=1,fade=t=in:st=0:d=0.06,fade=t=out:st=' + Math.max(0.01, outputDuration - 0.06).toFixed(3) + ':d=0.06[v' + inputIndex + ']';
@@ -246,16 +247,16 @@ function renderTimelineToFile(projectId: string, timeline: any) {
 
     const aLabel = 'a' + inputIndex;
     if (hasAudio(asset.path)) {
-      let af = '[' + inputIndex + ':a:0]aresample=48000,asetpts=PTS-STARTPTS,' + atempoChain(speed) + ',volume=' + Math.max(0, Math.min(4, Number(clip.volume ?? 1))).toFixed(3);
+      let af = '[' + streamIndex + ':a:0]aresample=48000,asetpts=PTS-STARTPTS,' + atempoChain(speed) + ',volume=' + Math.max(0, Math.min(4, Number(clip.volume ?? 1))).toFixed(3);
       if (clip.normalizeAudio !== false) af += ',loudnorm=I=-14:TP=-1.5:LRA=11:linear=true';
       filters.push(af + '[' + aLabel + ']');
     } else {
-      const dummyIndex = inputIndex + 1;
+      const dummyIndex = streamIndex + 1;
       inputs.push('-f', 'lavfi', '-t', String(outputDuration), '-i', 'anullsrc=channel_layout=stereo:sample_rate=48000');
       filters.push('[' + dummyIndex + ':a:0]atrim=0:' + outputDuration.toFixed(3) + ',asetpts=PTS-STARTPTS[' + aLabel + ']');
       inputIndex++;
     }
-    refs.push('[v' + inputIndex + '][a' + inputIndex + ']');
+    refs.push('[v' + streamIndex + '][a' + streamIndex + ']');
     inputIndex++;
   }
 
