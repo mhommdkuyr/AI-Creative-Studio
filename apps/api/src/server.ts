@@ -203,6 +203,118 @@ function buildShortFormTimeline(timeline: any) {
   return out;
 }
 
+
+function buildReferenceAnimeTimeline(timeline: any) {
+  const out = structuredClone(timeline);
+  const track = videoTrack(out);
+  const sources = [...track.clips].filter((clip: any) => Number(clip.trimEnd ?? clip.duration ?? 0) > Number(clip.trimStart ?? 0));
+  if (!sources.length) return null;
+
+  const chunkPattern = [0.62, 0.78, 0.54, 0.86, 0.66, 0.74, 0.58, 0.82];
+  const speeds = [1.00, 1.12, 0.94, 1.18, 1.05, 1.22, 0.98, 1.10];
+  const zooms = [1.03, 1.08, 1.02, 1.11, 1.05, 1.09];
+  const xShifts = [0, -0.08, 0.06, -0.04, 0.09, -0.02];
+  const maxDuration = 16.4;
+  const generated: any[] = [];
+  const flashTimes: number[] = [];
+  let cursor = 0;
+  let index = 0;
+
+  for (const source of sources) {
+    let sourceCursor = Number(source.trimStart || 0);
+    const sourceEnd = Number(source.trimEnd ?? source.duration ?? source.endTime ?? 0);
+    while (sourceCursor + 0.04 < sourceEnd && generated.length < 24 && cursor < maxDuration) {
+      const desired = chunkPattern[index % chunkPattern.length];
+      const chunk = Math.min(desired, sourceEnd - sourceCursor);
+      const speed = speeds[index % speeds.length];
+      const duration = chunk / speed;
+      if (cursor + duration > maxDuration) break;
+
+      const nextClip = {
+        id: randomUUID(),
+        assetId: source.assetId,
+        name: String(source.name || 'clip') + ' • ref-' + String(index + 1),
+        startTime: cursor,
+        endTime: cursor + duration,
+        trimStart: sourceCursor,
+        trimEnd: sourceCursor + chunk,
+        duration,
+        speed,
+        volume: 0.98,
+        opacity: 1,
+        effects: index % 3 === 0 ? [{ type: 'sharpen', amount: 0.8 }] : [],
+        audioEffects: [],
+        audioFade: { in: 0, out: 0 },
+        normalizeAudio: true,
+        contentFit: 'fill',
+        transform: {
+          scaleX: zooms[index % zooms.length],
+          scaleY: zooms[index % zooms.length],
+          x: xShifts[index % xShifts.length],
+          y: 0,
+          rotation: 0,
+          anchorX: 0.5,
+          anchorY: 0.5,
+        },
+        color: {
+          set_color_adjustments: {
+            contrast: 1.10,
+            saturation: 1.12,
+            exposure: 0.05,
+          },
+        },
+        keyframes: [],
+      };
+      generated.push(nextClip);
+      cursor += duration;
+      sourceCursor += chunk;
+      index++;
+
+      if (generated.length > 1 && generated.length % 4 === 0) {
+        flashTimes.push(Math.max(0.02, cursor - 0.045));
+      }
+    }
+    if (generated.length >= 24 || cursor >= maxDuration) break;
+  }
+
+  if (!generated.length) return null;
+
+  track.clips = generated;
+  out.width = 1080;
+  out.height = 1440;
+  out.fps = 30;
+  out.aspectRatio = '3:4';
+  out.duration = cursor;
+  out.currentTime = 0;
+  out.editPreset = {
+    name: 'reference-anime',
+    target: '3:4',
+    sourceReference: '2CjhGX-vvvo',
+    pacing: 'rapid cuts ~0.5-0.9s',
+    motion: 'micro zoom + horizontal reframe',
+    transitions: 'hard cuts + 45ms flash accents',
+    grade: 'high contrast / high saturation / sharpened',
+    audio: 'kept source audio + light dynamics',
+  };
+  out.flashTimes = flashTimes;
+  out.markers = generated.map((clip: any, i: number) => ({ id: randomUUID(), time: clip.startTime, label: 'Ref Cut ' + String(i + 1) }));
+
+  const textTrack = out.tracks.find((t: any) => t.type === 'text');
+  if (textTrack) {
+    textTrack.clips = [{
+      id: randomUUID(),
+      type: 'text',
+      name: 'AI CREATIVE STUDIO WATERMARK',
+      text: 'AI CREATIVE STUDIO',
+      startTime: 0.05,
+      endTime: Math.min(16.2, cursor),
+      duration: Math.max(0.05, Math.min(16.15, cursor - 0.05)),
+      style: { fontSize: 34, color: '#ffffff', position: 'top-right', opacity: 0.78 },
+    }];
+  }
+  return out;
+}
+
 function atempoChain(speed: number) {
   let value = Math.max(0.25, Math.min(4, Number(speed || 1)));
   const filters: string[] = [];
@@ -222,6 +334,7 @@ function renderTimelineToFile(projectId: string, timeline: any) {
   const targetW = Number(timeline.width || 1080);
   const targetH = Number(timeline.height || 1920);
   const fps = Number(timeline.fps || 30);
+  const referenceAnime = timeline.editPreset?.name === 'reference-anime';
   let inputIndex = 0;
 
   for (const clip of clips) {
@@ -234,15 +347,22 @@ function renderTimelineToFile(projectId: string, timeline: any) {
     inputs.push('-ss', String(Math.max(0, Number(clip.trimStart || 0))), '-t', String(sourceDuration), '-i', asset.path);
 
     const zoom = Math.max(1, Math.min(1.18, Number(clip.transform?.scaleX || 1)));
+    const shiftX = Math.max(-0.25, Math.min(0.25, Number(clip.transform?.x || 0)));
+    const shiftY = Math.max(-0.20, Math.min(0.20, Number(clip.transform?.y || 0)));
+    const cropX = '((iw-' + targetW + ')/2)+(' + shiftX.toFixed(3) + '*(iw-' + targetW + ')/2)';
+    const cropY = '((ih-' + targetH + ')/2)+(' + shiftY.toFixed(3) + '*(ih-' + targetH + ')/2)';
     const scaledW = Math.max(targetW, Math.round(targetW * zoom / 2) * 2);
     const scaledH = Math.max(targetH, Math.round(targetH * zoom / 2) * 2);
     const contrast = Math.max(0.85, Math.min(1.25, Number(clip.color?.set_color_adjustments?.contrast ?? 1)));
     const saturation = Math.max(0.7, Math.min(1.35, Number(clip.color?.set_color_adjustments?.saturation ?? 1)));
     const exposure = Math.max(-0.15, Math.min(0.15, Number(clip.color?.set_color_adjustments?.exposure ?? 0) * 0.12));
-    let vf = '[' + streamIndex + ':v:0]setpts=PTS-STARTPTS,scale=' + targetW + ':' + targetH + ':force_original_aspect_ratio=increase,crop=' + targetW + ':' + targetH;
+    let vf = '[' + streamIndex + ':v:0]setpts=PTS-STARTPTS,scale=' + targetW + ':' + targetH + ':force_original_aspect_ratio=increase,crop=' + targetW + ':' + targetH + ':' + cropX + ':' + cropY;
     if (zoom > 1.001) vf += ',scale=' + scaledW + ':' + scaledH + ',crop=' + targetW + ':' + targetH + ':(iw-' + targetW + ')/2:(ih-' + targetH + ')/2';
     if (speed !== 1) vf += ',setpts=PTS/' + speed.toFixed(4);
-    vf += ',fps=' + fps + ',eq=contrast=' + contrast.toFixed(3) + ':saturation=' + saturation.toFixed(3) + ':brightness=' + exposure.toFixed(3) + ',setsar=1,fade=t=in:st=0:d=0.06,fade=t=out:st=' + Math.max(0.01, outputDuration - 0.06).toFixed(3) + ':d=0.06[v' + inputIndex + ']';
+    vf += ',fps=' + fps + ',eq=contrast=' + contrast.toFixed(3) + ':saturation=' + saturation.toFixed(3) + ':brightness=' + exposure.toFixed(3);
+    if (referenceAnime) vf += ',unsharp=5:5:0.7:5:5:0';
+    if (!referenceAnime) vf += ',setsar=1,fade=t=in:st=0:d=0.06,fade=t=out:st=' + Math.max(0.01, outputDuration - 0.06).toFixed(3) + ':d=0.06';
+    vf += ',setsar=1[v' + inputIndex + ']';
     filters.push(vf);
 
     const aLabel = 'a' + inputIndex;
@@ -270,8 +390,16 @@ function renderTimelineToFile(projectId: string, timeline: any) {
     const font = '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf';
     const fontsize = Math.max(18, Math.min(120, Number(c.style?.fontSize || 64)));
     const text = String(c.text).replace(/\\/g, '\\\\').replace(/:/g, '\\:').replace(/'/g, "\\'");
-    filters.push(finalVideo + 'drawtext=fontfile=' + font + ':text=' + "'" + text + "'" + ':fontsize=' + fontsize + ':fontcolor=white:borderw=3:bordercolor=black:x=(w-text_w)/2:y=h*0.13:enable=between(t\\,' + start.toFixed(3) + '\\,' + end.toFixed(3) + ')[txt' + i + ']');
+    filters.push(finalVideo + 'drawtext=fontfile=' + font + ':text=' + "'" + text + "'" + ':fontsize=' + fontsize + ':fontcolor=white@' + (referenceAnime ? '0.78' : '1') + ':borderw=' + (referenceAnime ? '1' : '3') + ':bordercolor=black@0.75:x=' + (referenceAnime ? 'w-text_w-52' : '(w-text_w)/2') + ':y=' + (referenceAnime ? '28' : 'h*0.13') + ':enable=between(t\\,' + start.toFixed(3) + '\\,' + end.toFixed(3) + ')[txt' + i + ']');
     finalVideo = '[txt' + i + ']';
+  }
+  if (referenceAnime) {
+    for (const flashTime of (timeline.flashTimes || []).slice(0, 8)) {
+      const start = Math.max(0, Number(flashTime));
+      const end = Math.min(Number(timeline.duration || 0), start + 0.045);
+      filters.push(finalVideo + 'drawbox=x=0:y=0:w=iw:h=ih:color=white@0.82:t=fill:enable=between(t\\,' + start.toFixed(3) + '\\,' + end.toFixed(3) + ')[flash' + Math.round(start * 1000) + ']');
+      finalVideo = '[flash' + Math.round(start * 1000) + ']';
+    }
   }
   filters.push(finalVideo + 'format=yuv420p[outv]');
 
@@ -560,6 +688,21 @@ app.post('/api/projects/:id/auto-edit/short', (req, res) => {
   }
 });
 
+app.post('/api/projects/:id/auto-edit/reference', (req, res) => {
+  const projectId = String(req.params.id);
+  const p = getProject(projectId);
+  if (!p) return res.status(404).json({ error: 'Project not found' });
+  try {
+    const edited = buildReferenceAnimeTimeline(JSON.parse(p.timeline_json));
+    if (!edited) return res.status(422).json({ error: 'No usable video clips' });
+    saveTimeline(projectId, normalizeTimeline(edited));
+    res.json(payload(projectId));
+  } catch (error) {
+    res.status(422).json({ error: error instanceof Error ? error.message : 'Reference edit failed' });
+  }
+});
+
+
 app.post('/api/projects/:id/agent/import-and-render', async (req, res) => {
   const projectId = String(req.params.id);
   if (!getProject(projectId)) return res.status(404).json({ error: 'Project not found' });
@@ -609,7 +752,10 @@ app.post('/api/projects/:id/agent/import-and-render', async (req, res) => {
       });
     }
 
-    const edited = buildShortFormTimeline(JSON.parse(getProject(projectId).timeline_json));
+    const preset = String(req.body?.preset || 'fast-short');
+    const edited = preset === 'reference-anime'
+      ? buildReferenceAnimeTimeline(JSON.parse(getProject(projectId).timeline_json))
+      : buildShortFormTimeline(JSON.parse(getProject(projectId).timeline_json));
     if (!edited) return res.status(422).json({ error: 'No usable video clips after import', importedAssets });
     saveTimeline(projectId, normalizeTimeline(edited));
 
@@ -617,13 +763,15 @@ app.post('/api/projects/:id/agent/import-and-render', async (req, res) => {
     const output = renderTimelineToFile(projectId, finalTimeline);
     const probe = JSON.parse(execFileSync('ffprobe', ['-v', 'error', '-print_format', 'json', '-show_format', '-show_streams', output], { encoding: 'utf8', timeout: 30000 }));
     const video = probe.streams?.find((stream: any) => stream.codec_type === 'video');
-    if (!video || Number(video.width) !== 1080 || Number(video.height) !== 1920) {
+    const expectedWidth = Number(finalTimeline.width || 1080);
+    const expectedHeight = Number(finalTimeline.height || 1920);
+    if (!video || Number(video.width) !== expectedWidth || Number(video.height) !== expectedHeight) {
       try { unlinkSync(output); } catch {}
       return res.status(500).json({ error: 'Rendered output failed 9:16 verification', importedAssets });
     }
-    res.setHeader('X-Editor-Preset', 'fast-short');
-    res.setHeader('X-Rendered-Width', '1080');
-    res.setHeader('X-Rendered-Height', '1920');
+    res.setHeader('X-Editor-Preset', String(finalTimeline.editPreset?.name || 'fast-short'));
+    res.setHeader('X-Rendered-Width', String(expectedWidth));
+    res.setHeader('X-Rendered-Height', String(expectedHeight));
     res.download(output, 'ai-creative-short.mp4', () => { try { unlinkSync(output); } catch {} });
   } catch (error) {
     res.status(502).json({
