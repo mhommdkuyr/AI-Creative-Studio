@@ -81,6 +81,20 @@ export function MvpEditor({ projectId }: { projectId: string }) {
     }
   }
 
+  async function autoEditReference() {
+    if (!project) return;
+    setStatus('جاري تطبيق نمط المرجع…');
+    try {
+      const r = await fetch(api(`/api/projects/${project.id}/auto-edit/reference`), { method:'POST' });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data?.error || 'فشل تطبيق نمط المرجع');
+      setProject(data);
+      const count = data.timeline.tracks.find((t:any)=>t.type==='video')?.clips?.length || 0;
+      setStatus(`تم تطبيق نمط المرجع • 3:4 • ${Number(data.timeline.duration).toFixed(2)}ث • ${count} قصات`);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : 'فشل تطبيق نمط المرجع');
+    }
+  }
   async function autoEditShort() {
     if (!project) return;
     setStatus('جاري بناء مونتاج Short حقيقي…');
@@ -141,6 +155,7 @@ export function MvpEditor({ projectId }: { projectId: string }) {
       <button className="btn" onClick={()=>history('undo')} disabled={!project || project.historyIndex<=0}>تراجع</button>
       <button className="btn" onClick={()=>history('redo')} disabled={!project || project.historyIndex>=project.historyLength-1}>إعادة</button>
       <button className="btn" onClick={autoEditShort} disabled={!project || clips.length===0}>AI Short 9:16</button>
+      <button className="btn" onClick={autoEditReference} disabled={!project || clips.length===0}>نمط المرجع 3:4</button>
       <button className="btn btn-primary" onClick={render} disabled={!selected}>تصدير MP4</button>
       <span className="text-xs text-white/50 ml-auto">{status}</span>
     </div>
