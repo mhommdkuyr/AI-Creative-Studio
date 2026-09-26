@@ -53,13 +53,16 @@ describe('integrated API', () => {
   });
 
   it('imports a real MP4 from a server-side Google Drive source and inserts it into the timeline', async () => {
+    const testProject = await request(app).post('/api/projects').send({ name: 'Drive Import Test' });
+    expect(testProject.status).toBe(200);
+    const driveProjectId = testProject.body.id;
     const source = await startFixtureServer((_req, res) => {
       res.writeHead(200, { 'content-type': 'video/mp4' });
       createReadStream(fixture).pipe(res);
     });
     try {
       const response = await request(app)
-        .post(`/api/projects/${projectId}/import/google-drive`)
+        .post(`/api/projects/${driveProjectId}/import/google-drive`)
         .send({ fileId: 'drive-test-file', name: 'drive-test.mp4', downloadUrl: source.url });
       expect(response.status).toBe(201);
       expect(response.body.importedMedia.width).toBe(640);
