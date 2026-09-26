@@ -248,7 +248,7 @@ function renderTimelineToFile(projectId: string, timeline: any) {
     const aLabel = 'a' + inputIndex;
     if (hasAudio(asset.path)) {
       let af = '[' + streamIndex + ':a:0]aresample=48000,asetpts=PTS-STARTPTS,' + atempoChain(speed) + ',volume=' + Math.max(0, Math.min(4, Number(clip.volume ?? 1))).toFixed(3);
-      if (clip.normalizeAudio !== false) af += ',loudnorm=I=-14:TP=-1.5:LRA=11:linear=true';
+      if (clip.normalizeAudio !== false) af += ',acompressor=threshold=-18dB:ratio=2:attack=5:release=80,alimiter=limit=0.95';
       filters.push(af + '[' + aLabel + ']');
     } else {
       const dummyIndex = streamIndex + 1;
@@ -280,7 +280,7 @@ function renderTimelineToFile(projectId: string, timeline: any) {
     '-y', ...inputs, '-filter_complex', filters.join(';'),
     '-map', '[outv]', '-map', '[basea]', '-r', String(fps),
     '-c:v', 'libx264', '-preset', 'veryfast', '-pix_fmt', 'yuv420p',
-    '-c:a', 'aac', '-b:a', '160k', '-movflags', '+faststart', output
+    '-c:a', 'aac', '-b:a', '160k', '-ar', '48000', '-movflags', '+faststart', output
   ], { encoding: 'utf8', timeout: 180000 });
   if (result.status !== 0 || !existsSync(output)) throw new Error((result.stderr || 'FFmpeg render failed').slice(-4000));
   return output;
