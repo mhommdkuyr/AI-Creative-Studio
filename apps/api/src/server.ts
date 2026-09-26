@@ -292,8 +292,8 @@ function buildReferenceAnimeTimeline(timeline: any) {
   if (!generated.length) return null;
 
   track.clips = generated;
-  out.width = 720;
-  out.height = 960;
+  out.width = 480;
+  out.height = 640;
   out.fps = 30;
   out.aspectRatio = '3:4';
   out.duration = cursor;
@@ -349,6 +349,52 @@ function renderTimelineToFile(projectId: string, timeline: any) {
   const referenceAnime = timeline.editPreset?.name === 'reference-anime';
   let inputIndex = 0;
 
+  if (referenceAnime) {
+    const firstAsset = db.prepare('SELECT * FROM assets WHERE id=?').get(clips[0].assetId) as any;
+    if (!firstAsset || !existsSync(firstAsset.path)) throw new Error('Media missing for reference render');
+    if (clips.some((clip: any) => clip.assetId !== clips[0].assetId)) throw new Error('Reference preset currently requires one source asset');
+    inputs.push('-i', firstAsset.path);
+    const sourceHasAudio = hasAudio(firstAsset.path);
+
+    for (let i = 0; i < clips.length; i++) {
+      const clip = clips[i];
+      const trimStart = Math.max(0, Number(clip.trimStart || 0));
+      const trimEnd = Math.max(trimStart + 0.02, Number(clip.trimEnd || (trimStart + Number(clip.duration || 0.02))));
+      const sourceDuration = trimEnd - trimStart;
+      const speed = Math.max(0.25, Math.min(4, Number(clip.speed || 1)));
+      const outputDuration = sourceDuration / speed;
+      const zoom = Math.max(1, Math.min(1.18, Number(clip.transform?.scaleX || 1)));
+      const shiftX = Math.max(-0.25, Math.min(0.25, Number(clip.transform?.x || 0)));
+      const shiftY = Math.max(-0.20, Math.min(0.20, Number(clip.transform?.y || 0)));
+      const cropX = '((iw-' + targetW + ')/2)+(' + shiftX.toFixed(3) + '*(iw-' + targetW + ')/2)';
+      const cropY = '((ih-' + targetH + ')/2)+(' + shiftY.toFixed(3) + '*(ih-' + targetH + ')/2)';
+      const scaledW = Math.max(targetW, Math.round(targetW * zoom / 2) * 2);
+      const scaledH = Math.max(targetH, Math.round(targetH * zoom / 2) * 2);
+      const contrast = Math.max(0.85, Math.min(1.25, Number(clip.color?.set_color_adjustments?.contrast ?? 1)));
+      const saturation = Math.max(0.7, Math.min(1.35, Number(clip.color?.set_color_adjustments?.saturation ?? 1)));
+      const exposure = Math.max(-0.15, Math.min(0.15, Number(clip.color?.set_color_adjustments?.exposure ?? 0) * 0.12));
+
+      let vf = '[0:v:0]trim=start=' + trimStart.toFixed(3) + ':end=' + trimEnd.toFixed(3) + ',setpts=PTS-STARTPTS,scale=' + targetW + ':' + targetH + ':force_original_aspect_ratio=increase,crop=' + targetW + ':' + targetH + ':' + cropX + ':' + cropY;
+      if (zoom > 1.001) vf += ',scale=' + scaledW + ':' + scaledH + ',crop=' + targetW + ':' + targetH + ':(iw-' + targetW + ')/2:(ih-' + targetH + ')/2';
+      if (speed !== 1) vf += ',setpts=PTS/' + speed.toFixed(4);
+      vf += ',fps=' + fps + ',eq=contrast=' + contrast.toFixed(3) + ':saturation=' + saturation.toFixed(3) + ':brightness=' + exposure.toFixed(3) + ',setsar=1[v' + i + ']';
+      filters.push(vf);
+
+      const aLabel = 'a' + i;
+      if (sourceHasAudio) {
+        let af = '[0:a:0]atrim=start=' + trimStart.toFixed(3) + ':end=' + trimEnd.toFixed(3) + ',asetpts=PTS-STARTPTS,aresample=48000,' + atempoChain(speed) + ',volume=' + Math.max(0, Math.min(4, Number(clip.volume ?? 1))).toFixed(3);
+        if (clip.normalizeAudio !== false) af += ',acompressor=threshold=-18dB:ratio=2:attack=5:release=80,alimiter=limit=0.95';
+        filters.push(af + '[' + aLabel + ']');
+      } else {
+        const dummyIndex = 1;
+        if (!inputs.includes('anullsrc=channel_layout=stereo:sample_rate=48000')) {
+          inputs.push('-f', 'lavfi', '-t', String(Math.max(timeline.duration || 0, outputDuration)), '-i', 'anullsrc=channel_layout=stereo:sample_rate=48000');
+        }
+        filters.push('[' + dummyIndex + ':a:0]atrim=0:' + outputDuration.toFixed(3) + ',asetpts=PTS-STARTPTS[' + aLabel + ']');
+      }
+      refs.push('[v' + i + '][a' + i + ']');
+    }
+  } else {
   for (const clip of clips) {
     const asset = db.prepare('SELECT * FROM assets WHERE id=?').get(clip.assetId) as any;
     if (!asset || !existsSync(asset.path)) throw new Error('Media missing for ' + String(clip.name));
@@ -389,6 +435,9 @@ function renderTimelineToFile(projectId: string, timeline: any) {
     }
     refs.push('[v' + streamIndex + '][a' + streamIndex + ']');
     inputIndex++;
+  }
+
+
   }
 
   filters.push(refs.join('') + 'concat=n=' + clips.length + ':v=1:a=1[basev][basea]');
