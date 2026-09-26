@@ -890,7 +890,7 @@ app.get('/api/render-from-drive/start', (req, res) => {
       setTimeout(() => {
         const current = renderJobs.get(jobId);
         if (current?.output === output && current.status === 'completed') { try { unlinkSync(output); } catch {} renderJobs.delete(jobId); }
-      }, 15 * 60 * 1000);
+      }, 60 * 60 * 1000);
     } catch (error) {
       job.status = 'failed';
       job.error = error instanceof Error ? error.message : 'Drive render failed';
@@ -907,6 +907,16 @@ app.get('/api/render-jobs/:id', (req, res) => {
   res.json({ jobId, status: job.status, preset: job.preset, width: job.width, height: job.height, error: job.error, createdAt: job.createdAt, finishedAt: job.finishedAt, downloadUrl: job.status === 'completed' ? '/api/render-jobs/' + jobId + '/download' : undefined });
 });
 
+app.get('/api/render-jobs/:id/file', (req, res) => {
+  const jobId = String(req.params.id);
+  const job = renderJobs.get(jobId);
+  if (!job) return res.status(404).json({ error: 'Render job not found' });
+  if (job.status !== 'completed' || !job.output) return res.status(409).json({ error: 'Render is not completed', status: job.status, jobId });
+  if (!existsSync(job.output)) return res.status(404).json({ error: 'Rendered file is no longer available' });
+  res.setHeader('Content-Type', 'video/mp4');
+  res.setHeader('Content-Disposition', 'inline; filename="ai-creative-reference.mp4"');
+  res.sendFile(resolve(job.output));
+});
 app.get('/api/render-jobs/:id/download', (req, res) => {
   const jobId = String(req.params.id);
   const job = renderJobs.get(jobId);
