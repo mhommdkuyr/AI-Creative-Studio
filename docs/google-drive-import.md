@@ -30,3 +30,15 @@ Optional settings:
 GOOGLE_DRIVE_MAX_BYTES (default 1 GiB)
 GOOGLE_DRIVE_DOWNLOAD_TIMEOUT_MS (default 120000 ms)
 GOOGLE_DRIVE_IMPORT_ALLOWED_HOSTS (comma-separated additional hosts)
+
+## Agent-ready render
+
+The endpoint `POST /api/projects/:id/agent/import-and-render` accepts up to 12 authorized Drive items:
+
+- `fileId`
+- optional `name`
+- optional temporary `downloadUrl`
+
+It sequentially downloads the real binaries, creates real project assets, applies the deterministic `fast-short` 9:16 edit, renders with FFmpeg, verifies the rendered stream dimensions, and returns the MP4.
+
+The external agent is responsible for obtaining the current authorized temporary Drive download URL. The editor server never needs the agent's Google OAuth token when a temporary URL is supplied.
