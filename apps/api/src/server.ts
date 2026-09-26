@@ -545,40 +545,106 @@ app.post('/api/projects/:id/redo', (req, res) => {
   res.json(payload(projectId));
 });
 
+app.post('/api/projects/:id/auto-edit/short', (req, res) => {
+  const projectId = String(req.params.id);
+  const p = getProject(projectId);
+  if (!p) return res.status(404).json({ error: 'Project not found' });
+  try {
+    const edited = buildShortFormTimeline(JSON.parse(p.timeline_json));
+    if (!edited) return res.status(422).json({ error: 'No usable video clips' });
+    saveTimeline(projectId, normalizeTimeline(edited));
+    res.json(payload(projectId));
+  } catch (error) {
+    res.status(422).json({ error: error instanceof Error ? error.message : 'Auto edit failed' });
+  }
+});
+
+app.post('/api/projects/:id/agent/import-and-render', async (req, res) => {
+  const projectId = String(req.params.id);
+  if (!getProject(projectId)) return res.status(404).json({ error: 'Project not found' });
+  const files = Array.isArray(req.body?.files) ? req.body.files.slice(0, 12) : [];
+  if (!files.length) return res.status(400).json({ error: 'files must contain at least one Google Drive item' });
+
+  const importedAssets: any[] = [];
+  try {
+    let latest = getProject(projectId);
+    for (const item of files) {
+      const imported = await downloadGoogleDriveMedia({
+        fileId: String(item?.fileId || ''),
+        name: item?.name ? String(item.name) : undefined,
+        downloadUrl: item?.downloadUrl ? String(item.downloadUrl) : undefined,
+      }, MEDIA);
+
+      const assetId = randomUUID();
+      db.prepare('INSERT INTO assets VALUES(?,?,?,?,?,?,?)').run(assetId, projectId, imported.name, imported.path, imported.mime, imported.duration, now());
+      const timeline = JSON.parse(latest.timeline_json);
+      const track = videoTrack(timeline);
+      track.clips.push({
+        id: randomUUID(),
+        assetId,
+        name: imported.name,
+        startTime: timeline.duration,
+        endTime: timeline.duration + imported.duration,
+        trimStart: 0,
+        trimEnd: imported.duration,
+        duration: imported.duration,
+        speed: 1,
+        opacity: 1,
+        volume: 1,
+        effects: [],
+        audioEffects: [],
+        keyframes: [],
+      });
+      timeline.duration += imported.duration;
+      saveTimeline(projectId, normalizeTimeline(timeline));
+      latest = getProject(projectId);
+      importedAssets.push({
+        assetId,
+        fileId: imported.fileId,
+        name: imported.name,
+        duration: imported.duration,
+        width: imported.width,
+        height: imported.height,
+      });
+    }
+
+    const edited = buildShortFormTimeline(JSON.parse(getProject(projectId).timeline_json));
+    if (!edited) return res.status(422).json({ error: 'No usable video clips after import', importedAssets });
+    saveTimeline(projectId, normalizeTimeline(edited));
+
+    const finalTimeline = JSON.parse(getProject(projectId).timeline_json);
+    const output = renderTimelineToFile(projectId, finalTimeline);
+    const probe = JSON.parse(execFileSync('ffprobe', ['-v', 'error', '-print_format', 'json', '-show_format', '-show_streams', output], { encoding: 'utf8', timeout: 30000 }));
+    const video = probe.streams?.find((stream: any) => stream.codec_type === 'video');
+    if (!video || Number(video.width) !== 1080 || Number(video.height) !== 1920) {
+      try { unlinkSync(output); } catch {}
+      return res.status(500).json({ error: 'Rendered output failed 9:16 verification', importedAssets });
+    }
+    res.setHeader('X-Editor-Preset', 'fast-short');
+    res.setHeader('X-Rendered-Width', '1080');
+    res.setHeader('X-Rendered-Height', '1920');
+    res.download(output, 'ai-creative-short.mp4', () => { try { unlinkSync(output); } catch {} });
+  } catch (error) {
+    res.status(502).json({
+      error: error instanceof Error ? error.message : 'Drive import and render failed',
+      importedAssets,
+    });
+  }
+});
+
 app.post('/api/projects/:id/render', (req, res) => {
   const projectId = String(req.params.id);
   const p = getProject(projectId);
   if (!p) return res.status(404).json({ error: 'Project not found' });
-  const timeline = JSON.parse(p.timeline_json);
-  const track = videoTrack(timeline);
-  const clips = track.clips.filter((c: any) => c.duration > 0);
-  if (!clips.length) return res.status(422).json({ error: 'No video clips' });
-
-  const inputs: string[] = [];
-  for (const clip of clips) {
-    const asset = db.prepare('SELECT * FROM assets WHERE id=?').get(clip.assetId) as any;
-    if (!asset || !existsSync(asset.path)) return res.status(404).json({ error: `Media missing for ${clip.name}` });
-    inputs.push('-ss', String(clip.trimStart), '-t', String(Math.max(0.01, clip.trimEnd - clip.trimStart)), '-i', asset.path);
-    if (!hasAudio(asset.path)) inputs.push('-f', 'lavfi', '-t', String(Math.max(0.01, clip.trimEnd - clip.trimStart)), '-i', 'anullsrc=channel_layout=stereo:sample_rate=48000');
+  try {
+    const timeline = JSON.parse(p.timeline_json);
+    const output = renderTimelineToFile(projectId, timeline);
+    res.download(output, 'ai-video-studio.mp4', () => { try { unlinkSync(output); } catch {} });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'FFmpeg render failed';
+    const status = message === 'No video clips' ? 422 : 500;
+    res.status(status).json({ error: message });
   }
-
-  let filter = '';
-  let concatInputs = '';
-  let idx = 0;
-  for (const clip of clips) {
-    const asset = db.prepare('SELECT * FROM assets WHERE id=?').get(clip.assetId) as any;
-    const audio = hasAudio(asset.path);
-    filter += `[${idx}:v:0]setpts=PTS-STARTPTS[v${idx}];`;
-    filter += audio ? `[${idx}:a:0]aresample=48000,asetpts=PTS-STARTPTS[a${idx}];` : `[${idx + 1}:a:0]asetpts=PTS-STARTPTS[a${idx}];`;
-    concatInputs += `[v${idx}][a${idx}]`;
-    idx += audio ? 1 : 2;
-  }
-  filter += `${concatInputs}concat=n=${clips.length}:v=1:a=1[outv][outa]`;
-
-  const output = join(EXPORTS, `${randomUUID()}.mp4`);
-  const result = spawnSync('ffmpeg', ['-y', ...inputs, '-filter_complex', filter, '-map', '[outv]', '-map', '[outa]', '-c:v', 'libx264', '-preset', 'veryfast', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-movflags', '+faststart', output], { encoding: 'utf8', timeout: 180000 });
-  if (result.status !== 0 || !existsSync(output)) return res.status(500).json({ error: 'FFmpeg render failed', detail: result.stderr?.slice(-3000) });
-  res.download(output, 'ai-video-studio.mp4', () => { try { unlinkSync(output); } catch {} });
 });
 
 registerAIRoute(app, db);
