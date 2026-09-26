@@ -8,6 +8,7 @@ import { extname, join, resolve, basename } from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { registerAIRoute } from './aiRoute.js';
 import { registerPublicAPIRoute } from './publicApiRoute.js';
+import { downloadGoogleDriveMedia, GoogleDriveImportError } from './googleDriveImport.js';
 
 const ROOT = resolve(process.cwd(), '../..');
 const DATA = join(ROOT, 'data');
@@ -240,6 +241,102 @@ app.post('/api/projects/:id/upload', upload.single('file'), (req, res) => {
   timeline.duration += duration;
   saveTimeline(projectId, normalizeTimeline(timeline));
   res.json(payload(projectId));
+});
+
+
+app.post('/api/media/google-drive', async (req, res) => {
+  try {
+    const imported = await downloadGoogleDriveMedia(
+      {
+        fileId: String(req.body?.fileId || ''),
+        name: req.body?.name ? String(req.body.name) : undefined,
+        downloadUrl: req.body?.downloadUrl ? String(req.body.downloadUrl) : undefined,
+      },
+      MEDIA,
+    );
+    res.status(201).json({
+      fileId: imported.fileId,
+      name: imported.name,
+      url: `/media/${basename(imported.path)}`,
+      path: imported.path,
+      mime: imported.mime,
+      size: imported.size,
+      duration: imported.duration,
+      width: imported.width,
+      height: imported.height,
+      videoCodec: imported.videoCodec,
+      audioCodec: imported.audioCodec,
+    });
+  } catch (error) {
+    const driveError = error instanceof GoogleDriveImportError ? error : new GoogleDriveImportError(
+      error instanceof Error ? error.message : 'Google Drive import failed',
+      'google_drive_import_failed',
+      502,
+    );
+    res.status(driveError.statusCode).json({ error: { code: driveError.code, message: driveError.message } });
+  }
+});
+
+app.post('/api/projects/:id/import/google-drive', async (req, res) => {
+  const projectId = String(req.params.id);
+  const project = getProject(projectId);
+  if (!project) return res.status(404).json({ error: 'Project not found' });
+
+  try {
+    const imported = await downloadGoogleDriveMedia(
+      {
+        fileId: String(req.body?.fileId || ''),
+        name: req.body?.name ? String(req.body.name) : undefined,
+        downloadUrl: req.body?.downloadUrl ? String(req.body.downloadUrl) : undefined,
+      },
+      MEDIA,
+    );
+
+    try {
+      const assetId = randomUUID();
+      db.prepare('INSERT INTO assets VALUES(?,?,?,?,?,?,?)').run(
+        assetId,
+        projectId,
+        imported.name,
+        imported.path,
+        imported.mime,
+        imported.duration,
+        now(),
+      );
+
+      const timeline = JSON.parse(project.timeline_json);
+      const track = videoTrack(timeline);
+      track.clips.push({
+        id: randomUUID(),
+        assetId,
+        name: imported.name,
+        startTime: timeline.duration,
+        endTime: timeline.duration + imported.duration,
+        trimStart: 0,
+        trimEnd: imported.duration,
+        duration: imported.duration,
+        speed: 1,
+        opacity: 1,
+        effects: [],
+        animations: [],
+        keyframes: [],
+      });
+      timeline.duration += imported.duration;
+      saveTimeline(projectId, normalizeTimeline(timeline));
+    } catch (error) {
+      try { unlinkSync(imported.path); } catch {}
+      throw error;
+    }
+
+    res.status(201).json(payload(projectId));
+  } catch (error) {
+    const driveError = error instanceof GoogleDriveImportError ? error : new GoogleDriveImportError(
+      error instanceof Error ? error.message : 'Google Drive project import failed',
+      'google_drive_project_import_failed',
+      502,
+    );
+    res.status(driveError.statusCode).json({ error: { code: driveError.code, message: driveError.message } });
+  }
 });
 
 app.post('/api/projects/:id/command', (req, res) => {
