@@ -125,6 +125,166 @@ function videoTrack(timeline: any) {
   return track;
 }
 
+
+function buildShortFormTimeline(timeline: any) {
+  const out = structuredClone(timeline);
+  const track = videoTrack(out);
+  const sources = [...track.clips].filter((clip: any) => Number(clip.trimEnd ?? clip.duration ?? 0) > Number(clip.trimStart ?? 0));
+  if (!sources.length) return null;
+  const generated: any[] = [];
+  const speeds = [1.08, 0.96, 1.16, 1.0, 1.10, 1.02];
+  const zooms = [1.00, 1.05, 1.09, 1.03];
+  let cursor = 0;
+  let index = 0;
+  for (const source of sources) {
+    let sourceCursor = Number(source.trimStart || 0);
+    const sourceEnd = Number(source.trimEnd ?? source.duration ?? source.endTime ?? 0);
+    while (sourceCursor + 0.04 < sourceEnd && generated.length < 12 && cursor < 22) {
+      const chunk = Math.min(2.4, sourceEnd - sourceCursor);
+      const speed = speeds[index % speeds.length];
+      const duration = chunk / speed;
+      if (cursor + duration > 22) break;
+      generated.push({
+        id: randomUUID(),
+        assetId: source.assetId,
+        name: String(source.name || 'clip') + ' • ' + String(index + 1),
+        startTime: cursor,
+        endTime: cursor + duration,
+        trimStart: sourceCursor,
+        trimEnd: sourceCursor + chunk,
+        duration,
+        speed,
+        volume: 0.96,
+        opacity: 1,
+        effects: [],
+        audioEffects: [],
+        audioFade: { in: 0.06, out: 0.06 },
+        normalizeAudio: true,
+        contentFit: 'fill',
+        transform: { scaleX: zooms[index % zooms.length], scaleY: zooms[index % zooms.length], x: 0, y: 0, rotation: 0, anchorX: 0.5, anchorY: 0.5 },
+        color: { set_color_adjustments: { contrast: 1.04, saturation: 1.05, exposure: 0.04 } },
+        keyframes: [],
+      });
+      cursor += duration;
+      sourceCursor += chunk;
+      index++;
+    }
+    if (generated.length >= 12 || cursor >= 22) break;
+  }
+  if (!generated.length) return null;
+  track.clips = generated;
+  out.width = 1080;
+  out.height = 1920;
+  out.fps = 30;
+  out.aspectRatio = '9:16';
+  out.duration = cursor;
+  out.currentTime = 0;
+  out.editPreset = {
+    name: 'fast-short',
+    target: '9:16',
+    pacing: 'fast cuts',
+    motion: 'micro zoom',
+    audio: 'normalized with short fades',
+  };
+  out.markers = generated.map((clip: any, i: number) => ({ id: randomUUID(), time: clip.startTime, label: 'Cut ' + String(i + 1) }));
+  const textTrack = out.tracks.find((t: any) => t.type === 'text');
+  if (textTrack) {
+    textTrack.clips = [{
+      id: randomUUID(),
+      type: 'text',
+      name: 'AI CREATIVE STUDIO',
+      text: 'AI CREATIVE STUDIO',
+      startTime: 0.15,
+      endTime: Math.min(1.8, cursor),
+      duration: Math.min(1.65, Math.max(0.1, cursor - 0.15)),
+      style: { fontSize: 76, color: '#ffffff', position: 'top' },
+    }];
+  }
+  return out;
+}
+
+function atempoChain(speed: number) {
+  let value = Math.max(0.25, Math.min(4, Number(speed || 1)));
+  const filters: string[] = [];
+  while (value > 2) { filters.push('atempo=2'); value /= 2; }
+  while (value < 0.5) { filters.push('atempo=0.5'); value /= 0.5; }
+  filters.push('atempo=' + value.toFixed(4));
+  return filters.join(',');
+}
+
+function renderTimelineToFile(projectId: string, timeline: any) {
+  const track = videoTrack(timeline);
+  const clips = track.clips.filter((clip: any) => Number(clip.duration || 0) > 0);
+  if (!clips.length) throw new Error('No video clips');
+  const inputs: string[] = [];
+  const filters: string[] = [];
+  const refs: string[] = [];
+  const targetW = Number(timeline.width || 1080);
+  const targetH = Number(timeline.height || 1920);
+  const fps = Number(timeline.fps || 30);
+  let inputIndex = 0;
+
+  for (const clip of clips) {
+    const asset = db.prepare('SELECT * FROM assets WHERE id=?').get(clip.assetId) as any;
+    if (!asset || !existsSync(asset.path)) throw new Error('Media missing for ' + String(clip.name));
+    const sourceDuration = Math.max(0.01, Number(clip.trimEnd) - Number(clip.trimStart));
+    const speed = Math.max(0.25, Math.min(4, Number(clip.speed || 1)));
+    const outputDuration = sourceDuration / speed;
+    inputs.push('-ss', String(Math.max(0, Number(clip.trimStart || 0))), '-t', String(sourceDuration), '-i', asset.path);
+
+    const zoom = Math.max(1, Math.min(1.18, Number(clip.transform?.scaleX || 1)));
+    const scaledW = Math.max(targetW, Math.round(targetW * zoom / 2) * 2);
+    const scaledH = Math.max(targetH, Math.round(targetH * zoom / 2) * 2);
+    const contrast = Math.max(0.85, Math.min(1.25, Number(clip.color?.set_color_adjustments?.contrast ?? 1)));
+    const saturation = Math.max(0.7, Math.min(1.35, Number(clip.color?.set_color_adjustments?.saturation ?? 1)));
+    const exposure = Math.max(-0.15, Math.min(0.15, Number(clip.color?.set_color_adjustments?.exposure ?? 0) * 0.12));
+    let vf = '[' + inputIndex + ':v:0]setpts=PTS-STARTPTS,scale=' + targetW + ':' + targetH + ':force_original_aspect_ratio=increase,crop=' + targetW + ':' + targetH;
+    if (zoom > 1.001) vf += ',scale=' + scaledW + ':' + scaledH + ',crop=' + targetW + ':' + targetH + ':(iw-' + targetW + ')/2:(ih-' + targetH + ')/2';
+    if (speed !== 1) vf += ',setpts=PTS/' + speed.toFixed(4);
+    vf += ',fps=' + fps + ',eq=contrast=' + contrast.toFixed(3) + ':saturation=' + saturation.toFixed(3) + ':brightness=' + exposure.toFixed(3) + ',setsar=1,fade=t=in:st=0:d=0.06,fade=t=out:st=' + Math.max(0.01, outputDuration - 0.06).toFixed(3) + ':d=0.06[v' + inputIndex + ']';
+    filters.push(vf);
+
+    const aLabel = 'a' + inputIndex;
+    if (hasAudio(asset.path)) {
+      let af = '[' + inputIndex + ':a:0]aresample=48000,asetpts=PTS-STARTPTS,' + atempoChain(speed) + ',volume=' + Math.max(0, Math.min(4, Number(clip.volume ?? 1))).toFixed(3);
+      if (clip.normalizeAudio !== false) af += ',loudnorm=I=-14:TP=-1.5:LRA=11:linear=true';
+      filters.push(af + '[' + aLabel + ']');
+    } else {
+      const dummyIndex = inputIndex + 1;
+      inputs.push('-f', 'lavfi', '-t', String(outputDuration), '-i', 'anullsrc=channel_layout=stereo:sample_rate=48000');
+      filters.push('[' + dummyIndex + ':a:0]atrim=0:' + outputDuration.toFixed(3) + ',asetpts=PTS-STARTPTS[' + aLabel + ']');
+      inputIndex++;
+    }
+    refs.push('[v' + inputIndex + '][a' + inputIndex + ']');
+    inputIndex++;
+  }
+
+  filters.push(refs.join('') + 'concat=n=' + clips.length + ':v=1:a=1[basev][basea]');
+  let finalVideo = '[basev]';
+  const textClips = (timeline.tracks || []).flatMap((t: any) => t.type === 'text' ? (t.clips || []) : []).filter((c: any) => typeof c.text === 'string' && c.text.trim()).slice(0, 6);
+  for (let i = 0; i < textClips.length; i++) {
+    const c = textClips[i];
+    const start = Math.max(0, Number(c.startTime || 0));
+    const end = Math.max(start + 0.05, Number(c.endTime || start + Number(c.duration || 1)));
+    const font = '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf';
+    const fontsize = Math.max(18, Math.min(120, Number(c.style?.fontSize || 64)));
+    const text = String(c.text).replace(/\\/g, '\\\\').replace(/:/g, '\\:').replace(/'/g, "\\'");
+    filters.push(finalVideo + 'drawtext=fontfile=' + font + ':text=' + "'" + text + "'" + ':fontsize=' + fontsize + ':fontcolor=white:borderw=3:bordercolor=black:x=(w-text_w)/2:y=h*0.13:enable=between(t\\,' + start.toFixed(3) + '\\,' + end.toFixed(3) + ')[txt' + i + ']');
+    finalVideo = '[txt' + i + ']';
+  }
+  filters.push(finalVideo + 'format=yuv420p[outv]');
+
+  const output = join(EXPORTS, randomUUID() + '.mp4');
+  const result = spawnSync('ffmpeg', [
+    '-y', ...inputs, '-filter_complex', filters.join(';'),
+    '-map', '[outv]', '-map', '[basea]', '-r', String(fps),
+    '-c:v', 'libx264', '-preset', 'veryfast', '-pix_fmt', 'yuv420p',
+    '-c:a', 'aac', '-b:a', '160k', '-movflags', '+faststart', output
+  ], { encoding: 'utf8', timeout: 180000 });
+  if (result.status !== 0 || !existsSync(output)) throw new Error((result.stderr || 'FFmpeg render failed').slice(-4000));
+  return output;
+}
+
 function normalizeTimeline(timeline: any) {
   for (const track of timeline.tracks) track.clips.sort((a: any, b: any) => a.startTime - b.startTime);
   timeline.duration = Math.max(0, ...timeline.tracks.flatMap((t: any) => t.clips.map((c: any) => c.endTime)));
