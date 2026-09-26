@@ -766,7 +766,7 @@ app.post('/api/projects/:id/agent/import-and-render', async (req, res) => {
     const expectedHeight = Number(finalTimeline.height || 1920);
     if (!video || Number(video.width) !== expectedWidth || Number(video.height) !== expectedHeight) {
       try { unlinkSync(output); } catch {}
-      return res.status(500).json({ error: 'Rendered output failed 9:16 verification', importedAssets });
+      return res.status(500).json({ error: 'Rendered output failed dimension verification', importedAssets });
     }
     res.setHeader('X-Editor-Preset', String(finalTimeline.editPreset?.name || 'fast-short'));
     res.setHeader('X-Rendered-Width', String(expectedWidth));
@@ -780,6 +780,59 @@ app.post('/api/projects/:id/agent/import-and-render', async (req, res) => {
   }
 });
 
+app.get('/api/render-from-drive', async (req, res) => {
+  const fileId = String(req.query.fileId || '');
+  const downloadUrl = String(req.query.downloadUrl || '');
+  const preset = String(req.query.preset || 'reference-anime');
+  if (!fileId || !downloadUrl) return res.status(400).json({ error: 'fileId and downloadUrl are required' });
+  if (!['reference-anime', 'fast-short'].includes(preset)) return res.status(400).json({ error: 'Unsupported preset' });
+  let projectId: string | null = null;
+  let output: string | null = null;
+  try {
+    const created = createProject(preset === 'reference-anime' ? 'Drive Reference Render' : 'Drive Short Render');
+    projectId = created.id;
+    const imported = await downloadGoogleDriveMedia(
+      { fileId, downloadUrl, name: String(req.query.name || 'drive-' + fileId + '.mp4') },
+      MEDIA,
+    );
+    const assetId = randomUUID();
+    db.prepare('INSERT INTO assets VALUES(?,?,?,?,?,?,?)').run(assetId, projectId, imported.name, imported.path, imported.mime, imported.duration, now());
+    const timeline = JSON.parse(getProject(projectId)!.timeline_json);
+    const track = videoTrack(timeline);
+    track.clips.push({
+      id: randomUUID(), assetId, name: imported.name, startTime: 0, endTime: imported.duration,
+      trimStart: 0, trimEnd: imported.duration, duration: imported.duration, speed: 1, opacity: 1,
+      volume: 1, effects: [], audioEffects: [], keyframes: [],
+    });
+    timeline.duration = imported.duration;
+    saveTimeline(projectId, normalizeTimeline(timeline));
+    const edited = preset === 'reference-anime'
+      ? buildReferenceAnimeTimeline(JSON.parse(getProject(projectId)!.timeline_json))
+      : buildShortFormTimeline(JSON.parse(getProject(projectId)!.timeline_json));
+    if (!edited) return res.status(422).json({ error: 'No usable video clips after Drive import' });
+    saveTimeline(projectId, normalizeTimeline(edited));
+    const finalTimeline = JSON.parse(getProject(projectId)!.timeline_json);
+    output = renderTimelineToFile(projectId, finalTimeline);
+    const probe = JSON.parse(execFileSync('ffprobe', ['-v','error','-print_format','json','-show_format','-show_streams',output], { encoding: 'utf8', timeout: 30000 }));
+    const video = probe.streams?.find((stream: any) => stream.codec_type === 'video');
+    const expectedWidth = Number(finalTimeline.width || 1080);
+    const expectedHeight = Number(finalTimeline.height || 1920);
+    if (!video || Number(video.width) !== expectedWidth || Number(video.height) !== expectedHeight) {
+      try { unlinkSync(output); } catch {}
+      output = null;
+      return res.status(500).json({ error: 'Rendered output failed dimension verification' });
+    }
+    res.setHeader('X-Editor-Preset', String(finalTimeline.editPreset?.name || preset));
+    res.setHeader('X-Rendered-Width', String(expectedWidth));
+    res.setHeader('X-Rendered-Height', String(expectedHeight));
+    res.download(output, preset === 'reference-anime' ? 'ai-creative-reference.mp4' : 'ai-creative-short.mp4', () => {
+      try { if (output) unlinkSync(output); } catch {}
+    });
+  } catch (error) {
+    try { if (output) unlinkSync(output); } catch {}
+    res.status(502).json({ error: error instanceof Error ? error.message : 'Drive render failed' });
+  }
+});
 app.post('/api/projects/:id/render', (req, res) => {
   const projectId = String(req.params.id);
   const p = getProject(projectId);
