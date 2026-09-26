@@ -280,8 +280,8 @@ function buildReferenceAnimeTimeline(timeline: any) {
   if (!generated.length) return null;
 
   track.clips = generated;
-  out.width = 1080;
-  out.height = 1440;
+  out.width = 720;
+  out.height = 960;
   out.fps = 30;
   out.aspectRatio = '3:4';
   out.duration = cursor;
