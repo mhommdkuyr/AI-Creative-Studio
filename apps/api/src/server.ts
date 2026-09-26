@@ -12,7 +12,7 @@ import { downloadGoogleDriveMedia, GoogleDriveImportError } from './googleDriveI
 
 const ROOT = resolve(process.cwd(), '../..');
 const DATA = join(ROOT, 'data');
-const MEDIA = join(DATA, 'media');
+export const MEDIA = join(DATA, 'media');
 const EXPORTS = join(DATA, 'exports');
 mkdirSync(MEDIA, { recursive: true });
 mkdirSync(EXPORTS, { recursive: true });
