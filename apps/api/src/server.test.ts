@@ -213,8 +213,8 @@ describe('integrated API', () => {
 
     const edited = await request(app).post(`/api/projects/${id}/auto-edit/reference`);
     expect(edited.status).toBe(200);
-    expect(edited.body.timeline.width).toBe(720);
-    expect(edited.body.timeline.height).toBe(960);
+    expect(edited.body.timeline.width).toBe(480);
+    expect(edited.body.timeline.height).toBe(640);
     expect(edited.body.timeline.aspectRatio).toBe('3:4');
     expect(edited.body.timeline.editPreset.name).toBe('reference-anime');
     expect(edited.body.timeline.tracks[0].clips.length).toBeGreaterThanOrEqual(5);
@@ -229,8 +229,8 @@ describe('integrated API', () => {
     writeFileSync(out, rendered.body);
     const probe = JSON.parse(execFileSync('ffprobe', ['-v', 'error', '-print_format', 'json', '-show_streams', '-show_format', out], { encoding: 'utf8' }));
     const video = probe.streams.find((stream: any) => stream.codec_type === 'video');
-    expect(video.width).toBe(720);
-    expect(video.height).toBe(960);
+    expect(video.width).toBe(480);
+    expect(video.height).toBe(640);
     expect(video.codec_name).toBe('h264');
     expect(Number(probe.format.duration)).toBeGreaterThan(2.5);
     unlinkSync(out);
