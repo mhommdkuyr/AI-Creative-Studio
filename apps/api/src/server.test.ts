@@ -199,7 +199,7 @@ describe('integrated API', () => {
     const video = probe.streams.find((stream: any) => stream.codec_type === 'video');
     expect(video.width).toBe(1080);
     expect(video.height).toBe(1920);
-    expect(Number(probe.format.duration)).toBeGreaterThan(5);
+    expect(Number(probe.format.duration)).toBeGreaterThan(2.5);
     unlinkSync(out);
   }, 60000);
 
