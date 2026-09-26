@@ -404,11 +404,11 @@ function renderTimelineToFile(projectId: string, timeline: any) {
 
   const output = join(EXPORTS, randomUUID() + '.mp4');
   const result = spawnSync('ffmpeg', [
-    '-y', ...inputs, '-filter_complex', filters.join(';'),
+    '-hide_banner', '-loglevel', 'error', '-y', ...inputs, '-filter_complex', filters.join(';'),
     '-map', '[outv]', '-map', '[basea]', '-r', String(fps),
     '-c:v', 'libx264', '-preset', referenceAnime ? 'ultrafast' : 'veryfast', '-pix_fmt', 'yuv420p',
     '-c:a', 'aac', '-b:a', '160k', '-ar', '48000', '-movflags', '+faststart', output
-  ], { encoding: 'utf8', timeout: 180000 });
+  ], { encoding: 'utf8', timeout: 180000, maxBuffer: 16 * 1024 * 1024 });
   if (result.status !== 0 || !existsSync(output)) throw new Error((result.stderr || 'FFmpeg render failed').slice(-4000));
   return output;
 }
