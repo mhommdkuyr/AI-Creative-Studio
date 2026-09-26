@@ -15,6 +15,9 @@ export function MvpEditor({ projectId }: { projectId: string }) {
   const [command, setCommand] = useState('');
   const [selectedClip, setSelectedClip] = useState<string | null>(null);
   const [playing, setPlaying] = useState(false);
+  const [driveFileId, setDriveFileId] = useState('');
+  const [driveDownloadUrl, setDriveDownloadUrl] = useState('');
+  const [driveMeta, setDriveMeta] = useState<{ duration:number; width:number; height:number; name:string } | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
@@ -50,6 +53,32 @@ export function MvpEditor({ projectId }: { projectId: string }) {
       setProject(await r.json());
     }
     setStatus('تم استيراد الوسائط');
+  }
+
+  async function importFromGoogleDrive() {
+    if (!project || !driveFileId.trim()) return;
+    setStatus('جاري تنزيل الفيديو من Google Drive إلى المحرك…');
+    setDriveMeta(null);
+    try {
+      const r = await fetch(api(`/api/projects/${project.id}/import/google-drive`), {
+        method:'POST',
+        headers:{'content-type':'application/json'},
+        body:JSON.stringify({
+          fileId: driveFileId.trim(),
+          name: `drive-${driveFileId.trim()}.mp4`,
+          ...(driveDownloadUrl.trim() ? { downloadUrl: driveDownloadUrl.trim() } : {}),
+        }),
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data?.error?.message || 'فشل تنزيل فيديو Google Drive');
+      setProject(data);
+      setDriveMeta(data.importedMedia);
+      setStatus(`تم تنزيل الفيديو فعليًا • ${data.importedMedia.width}×${data.importedMedia.height} • ${Number(data.importedMedia.duration).toFixed(2)}ث`);
+      setDriveFileId('');
+      setDriveDownloadUrl('');
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : 'فشل استيراد Google Drive');
+    }
   }
 
   async function runCommand() {
@@ -89,6 +118,12 @@ export function MvpEditor({ projectId }: { projectId: string }) {
     <div className="flex items-center gap-2 p-3 border-b border-border bg-surface-elevated flex-wrap">
       <button className="btn btn-primary" onClick={()=>inputRef.current?.click()}>استيراد فيديو</button>
       <input ref={inputRef} type="file" accept="video/*,audio/*" multiple className="hidden" onChange={e=>upload(e.target.files)} />
+      <div className="flex items-center gap-2 flex-wrap basis-full lg:basis-auto">
+        <input className="bg-surface-elevated border border-border rounded-lg px-2 py-1.5 text-xs w-56" value={driveFileId} onChange={e=>setDriveFileId(e.target.value)} placeholder="Google Drive File ID" />
+        <input className="bg-surface-elevated border border-border rounded-lg px-2 py-1.5 text-xs w-72" value={driveDownloadUrl} onChange={e=>setDriveDownloadUrl(e.target.value)} placeholder="رابط تنزيل موقّت (اختياري)" type="url" />
+        <button className="btn btn-primary text-xs" onClick={importFromGoogleDrive} disabled={!project || !driveFileId.trim()}>استيراد من Drive</button>
+        {driveMeta && <span className="text-[11px] text-white/50">{driveMeta.width}×{driveMeta.height} • {driveMeta.duration.toFixed(2)}s</span>}
+      </div>
       <button className="btn" onClick={()=>history('undo')} disabled={!project || project.historyIndex<=0}>تراجع</button>
       <button className="btn" onClick={()=>history('redo')} disabled={!project || project.historyIndex>=project.historyLength-1}>إعادة</button>
       <button className="btn btn-primary" onClick={render} disabled={!selected}>تصدير MP4</button>
