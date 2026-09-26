@@ -360,7 +360,6 @@ function renderTimelineToFile(projectId: string, timeline: any) {
     if (zoom > 1.001) vf += ',scale=' + scaledW + ':' + scaledH + ',crop=' + targetW + ':' + targetH + ':(iw-' + targetW + ')/2:(ih-' + targetH + ')/2';
     if (speed !== 1) vf += ',setpts=PTS/' + speed.toFixed(4);
     vf += ',fps=' + fps + ',eq=contrast=' + contrast.toFixed(3) + ':saturation=' + saturation.toFixed(3) + ':brightness=' + exposure.toFixed(3);
-    if (referenceAnime) vf += ',unsharp=5:5:0.7:5:5:0';
     if (!referenceAnime) vf += ',setsar=1,fade=t=in:st=0:d=0.06,fade=t=out:st=' + Math.max(0.01, outputDuration - 0.06).toFixed(3) + ':d=0.06';
     vf += ',setsar=1[v' + inputIndex + ']';
     filters.push(vf);
@@ -407,7 +406,7 @@ function renderTimelineToFile(projectId: string, timeline: any) {
   const result = spawnSync('ffmpeg', [
     '-y', ...inputs, '-filter_complex', filters.join(';'),
     '-map', '[outv]', '-map', '[basea]', '-r', String(fps),
-    '-c:v', 'libx264', '-preset', 'veryfast', '-pix_fmt', 'yuv420p',
+    '-c:v', 'libx264', '-preset', referenceAnime ? 'ultrafast' : 'veryfast', '-pix_fmt', 'yuv420p',
     '-c:a', 'aac', '-b:a', '160k', '-ar', '48000', '-movflags', '+faststart', output
   ], { encoding: 'utf8', timeout: 180000 });
   if (result.status !== 0 || !existsSync(output)) throw new Error((result.stderr || 'FFmpeg render failed').slice(-4000));
