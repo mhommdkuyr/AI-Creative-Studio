@@ -158,7 +158,7 @@ export function probeMedia(path: string, mime = 'video/mp4'): ProbedMedia {
     videoCodec: video?.codec_name || null,
     audioCodec: audio?.codec_name || null,
     mime,
-    size: Number.isFinite(size) ? size : 0,
+    size: 0,
   };
 }
 
