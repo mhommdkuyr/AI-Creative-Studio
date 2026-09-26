@@ -13,6 +13,18 @@ import { downloadGoogleDriveMedia, GoogleDriveImportError } from './googleDriveI
 const ROOT = resolve(process.cwd(), '../..');
 const DATA = join(ROOT, 'data');
 export const MEDIA = join(DATA, 'media');
+type RenderJob = {
+  status: 'queued' | 'running' | 'completed' | 'failed';
+  projectId?: string;
+  output?: string;
+  error?: string;
+  width?: number;
+  height?: number;
+  preset?: string;
+  createdAt: string;
+  finishedAt?: string;
+};
+const renderJobs = new Map<string, RenderJob>();
 const EXPORTS = join(DATA, 'exports');
 mkdirSync(MEDIA, { recursive: true });
 mkdirSync(EXPORTS, { recursive: true });
