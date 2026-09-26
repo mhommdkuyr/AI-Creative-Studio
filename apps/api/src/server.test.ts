@@ -203,6 +203,39 @@ describe('integrated API', () => {
     unlinkSync(out);
   }, 60000);
 
+
+  it('builds and renders the YouTube-reference-inspired 3:4 anime style', async () => {
+    const created = await request(app).post('/api/projects').send({ name: 'Reference Anime Test' });
+    expect(created.status).toBe(200);
+    const id = created.body.id;
+    const uploaded = await request(app).post(\`/api/projects/\${id}/upload\`).attach('file', fixture);
+    expect(uploaded.status).toBe(200);
+
+    const edited = await request(app).post(\`/api/projects/\${id}/auto-edit/reference\`);
+    expect(edited.status).toBe(200);
+    expect(edited.body.timeline.width).toBe(1080);
+    expect(edited.body.timeline.height).toBe(1440);
+    expect(edited.body.timeline.aspectRatio).toBe('3:4');
+    expect(edited.body.timeline.editPreset.name).toBe('reference-anime');
+    expect(edited.body.timeline.tracks[0].clips.length).toBeGreaterThanOrEqual(5);
+
+    const rendered = await request(app).post(\`/api/projects/\${id}/render\`);
+    expect(rendered.status).toBe(200);
+    expect(rendered.headers['content-type']).toMatch(/video\/mp4/);
+    expect(Buffer.isBuffer(rendered.body)).toBe(true);
+    expect(rendered.body.length).toBeGreaterThan(10000);
+
+    const out = join(tmpdir(), 'ai-creative-studio-reference-anime-test.mp4');
+    writeFileSync(out, rendered.body);
+    const probe = JSON.parse(execFileSync('ffprobe', ['-v', 'error', '-print_format', 'json', '-show_streams', '-show_format', out], { encoding: 'utf8' }));
+    const video = probe.streams.find((stream: any) => stream.codec_type === 'video');
+    expect(video.width).toBe(1080);
+    expect(video.height).toBe(1440);
+    expect(video.codec_name).toBe('h264');
+    expect(Number(probe.format.duration)).toBeGreaterThan(2.5);
+    unlinkSync(out);
+  }, 60000);
+
   it('renders the edited multi-clip timeline into a real MP4', async () => {
     const response = await request(app).post(`/api/projects/${projectId}/render`);
     expect(response.status).toBe(200);
