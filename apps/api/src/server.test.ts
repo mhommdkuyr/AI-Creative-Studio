@@ -208,10 +208,10 @@ describe('integrated API', () => {
     const created = await request(app).post('/api/projects').send({ name: 'Reference Anime Test' });
     expect(created.status).toBe(200);
     const id = created.body.id;
-    const uploaded = await request(app).post(\`/api/projects/\${id}/upload\`).attach('file', fixture);
+    const uploaded = await request(app).post(`/api/projects/${id}/upload`).attach('file', fixture);
     expect(uploaded.status).toBe(200);
 
-    const edited = await request(app).post(\`/api/projects/\${id}/auto-edit/reference\`);
+    const edited = await request(app).post(`/api/projects/${id}/auto-edit/reference`);
     expect(edited.status).toBe(200);
     expect(edited.body.timeline.width).toBe(1080);
     expect(edited.body.timeline.height).toBe(1440);
@@ -219,7 +219,7 @@ describe('integrated API', () => {
     expect(edited.body.timeline.editPreset.name).toBe('reference-anime');
     expect(edited.body.timeline.tracks[0].clips.length).toBeGreaterThanOrEqual(5);
 
-    const rendered = await request(app).post(\`/api/projects/\${id}/render\`);
+    const rendered = await request(app).post(`/api/projects/${id}/render`);
     expect(rendered.status).toBe(200);
     expect(rendered.headers['content-type']).toMatch(/video\/mp4/);
     expect(Buffer.isBuffer(rendered.body)).toBe(true);
