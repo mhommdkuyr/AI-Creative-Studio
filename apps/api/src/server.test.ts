@@ -1,9 +1,11 @@
 import { describe, expect, it, beforeAll, afterAll } from 'vitest';
 import request from 'supertest';
 import { execFileSync } from 'node:child_process';
+import { createServer } from 'node:http';
+import { createReadStream, existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { app, db } from './server.js';
+import { app, db, MEDIA } from './server.js';
 import { verifyGeminiCredentials } from './aiProvider.js';
 
 let projectId = '';
@@ -11,6 +13,14 @@ const fixture = join(tmpdir(), 'ai-creative-studio-test.mp4');
 
 const hasGemini = Boolean(process.env.GEMINI_API_KEY || process.env.GEMINI_API_KEY_2);
 const expectedProvider = hasGemini ? 'gemini' : process.env.OPENAI_API_KEY ? 'openai' : 'local';
+
+async function startFixtureServer(handler: (req: import('node:http').IncomingMessage, res: import('node:http').ServerResponse) => void) {
+  const server = createServer(handler);
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  if (!address || typeof address === 'string') throw new Error('Fixture server did not bind');
+  return { server, url: `http://127.0.0.1:${address.port}/fixture.mp4` };
+}
 
 describe('integrated API', () => {
   beforeAll(() => {
@@ -40,6 +50,82 @@ describe('integrated API', () => {
     expect(response.body.assets).toHaveLength(1);
     expect(response.body.assets[0].duration).toBeGreaterThan(2.9);
     expect(response.body.timeline.tracks[0].clips).toHaveLength(1);
+  });
+
+  it('imports a real MP4 from a server-side Google Drive source and inserts it into the timeline', async () => {
+    const source = await startFixtureServer((_req, res) => {
+      res.writeHead(200, { 'content-type': 'video/mp4' });
+      createReadStream(fixture).pipe(res);
+    });
+    try {
+      const response = await request(app)
+        .post(`/api/projects/${projectId}/import/google-drive`)
+        .send({ fileId: 'drive-test-file', name: 'drive-test.mp4', downloadUrl: source.url });
+      expect(response.status).toBe(201);
+      expect(response.body.importedMedia.width).toBe(640);
+      expect(response.body.importedMedia.height).toBe(360);
+      expect(response.body.importedMedia.duration).toBeGreaterThan(2.9);
+      expect(response.body.assets).toHaveLength(1);
+      expect(response.body.timeline.tracks[0].clips).toHaveLength(1);
+      expect(existsSync(response.body.assets[0].path)).toBe(true);
+    } finally {
+      await new Promise<void>((resolve) => source.server.close(() => resolve()));
+    }
+  });
+
+  it('rejects a non-video Google Drive download', async () => {
+    const source = await startFixtureServer((_req, res) => {
+      res.writeHead(200, { 'content-type': 'text/plain' });
+      res.end('not a video');
+    });
+    try {
+      const response = await request(app)
+        .post('/api/media/google-drive')
+        .send({ fileId: 'drive-invalid-mime', name: 'not-video.mp4', downloadUrl: source.url });
+      expect(response.status).toBe(415);
+      expect(response.body.error.code).toBe('invalid_video_content_type');
+    } finally {
+      await new Promise<void>((resolve) => source.server.close(() => resolve()));
+    }
+  });
+
+  it('enforces the Google Drive download size limit before writing oversized content', async () => {
+    const previous = process.env.GOOGLE_DRIVE_MAX_BYTES;
+    process.env.GOOGLE_DRIVE_MAX_BYTES = '1024';
+    const source = await startFixtureServer((_req, res) => {
+      res.writeHead(200, { 'content-type': 'video/mp4', 'content-length': '2048' });
+      res.end(Buffer.alloc(2048));
+    });
+    try {
+      const response = await request(app)
+        .post('/api/media/google-drive')
+        .send({ fileId: 'drive-too-large', name: 'too-large.mp4', downloadUrl: source.url });
+      expect(response.status).toBe(413);
+      expect(response.body.error.code).toBe('download_too_large');
+    } finally {
+      await new Promise<void>((resolve) => source.server.close(() => resolve()));
+      if (previous === undefined) delete process.env.GOOGLE_DRIVE_MAX_BYTES;
+      else process.env.GOOGLE_DRIVE_MAX_BYTES = previous;
+    }
+  });
+
+  it('cleans up a partially downloaded invalid video', async () => {
+    const before = new Set(readdirSync(MEDIA));
+    const source = await startFixtureServer((_req, res) => {
+      res.writeHead(200, { 'content-type': 'video/mp4' });
+      res.end(Buffer.from('this is not an actual mp4'));
+    });
+    try {
+      const response = await request(app)
+        .post('/api/media/google-drive')
+        .send({ fileId: 'drive-bad-bytes', name: 'broken.mp4', downloadUrl: source.url });
+      expect(response.status).toBe(422);
+      expect(response.body.error.code).toBe('ffprobe_failed');
+      const after = new Set(readdirSync(MEDIA));
+      expect([...after].filter(name => !before.has(name))).toHaveLength(0);
+    } finally {
+      await new Promise<void>((resolve) => source.server.close(() => resolve()));
+    }
   });
 
   it('uses the configured real AI provider for an Arabic editing command', async () => {
