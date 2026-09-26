@@ -81,6 +81,20 @@ export function MvpEditor({ projectId }: { projectId: string }) {
     }
   }
 
+  async function autoEditShort() {
+    if (!project) return;
+    setStatus('جاري بناء مونتاج Short حقيقي…');
+    try {
+      const r = await fetch(api(`/api/projects/${project.id}/auto-edit/short`), { method:'POST' });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data?.error || 'فشل المونتاج التلقائي');
+      setProject(data);
+      setStatus(`تم تجهيز Short ‏9:16 • ${Number(data.timeline.duration).toFixed(2)}ث • ${data.timeline.tracks.find((t:any)=>t.type==='video')?.clips?.length || 0} قصات`);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : 'فشل المونتاج التلقائي');
+    }
+  }
+
   async function runCommand() {
     if (!project || !command.trim()) return;
     setStatus('جاري تنفيذ أمر AI…');
@@ -126,6 +140,7 @@ export function MvpEditor({ projectId }: { projectId: string }) {
       </div>
       <button className="btn" onClick={()=>history('undo')} disabled={!project || project.historyIndex<=0}>تراجع</button>
       <button className="btn" onClick={()=>history('redo')} disabled={!project || project.historyIndex>=project.historyLength-1}>إعادة</button>
+      <button className="btn" onClick={autoEditShort} disabled={!project || clips.length===0}>AI Short 9:16</button>
       <button className="btn btn-primary" onClick={render} disabled={!selected}>تصدير MP4</button>
       <span className="text-xs text-white/50 ml-auto">{status}</span>
     </div>
