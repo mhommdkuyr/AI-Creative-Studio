@@ -789,8 +789,10 @@ app.get('/api/render-from-drive', async (req, res) => {
   let projectId: string | null = null;
   let output: string | null = null;
   try {
-    const created = createProject(preset === 'reference-anime' ? 'Drive Reference Render' : 'Drive Short Render');
-    projectId = created.id;
+    projectId = randomUUID();
+    const baseTimeline = timelineTemplate();
+    const ts = now();
+    db.prepare('INSERT INTO projects VALUES(?,?,?,?,?,?,?)').run(projectId, preset === 'reference-anime' ? 'Drive Reference Render' : 'Drive Short Render', JSON.stringify(baseTimeline), JSON.stringify([baseTimeline]), 0, ts, ts);
     const imported = await downloadGoogleDriveMedia(
       { fileId, downloadUrl, name: String(req.query.name || 'drive-' + fileId + '.mp4') },
       MEDIA,
