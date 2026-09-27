@@ -6,7 +6,6 @@ export interface Env {
 }
 
 const allowedMethods = new Set(['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']);
-const publicPaths = new Set(['/api/health', '/api/capabilities']);
 
 function cors(origin: string | null) {
   const headers = new Headers();
@@ -36,7 +35,7 @@ function isSameOrigin(request: Request) {
   }
 }
 
-function capabilityResponse(request: Request) {
+function capabilityResponse(request: Request, env: Env) {
   const headers = cors(request.headers.get('Origin'));
   headers.set('Content-Type', 'application/json; charset=utf-8');
   return new Response(JSON.stringify({
@@ -45,7 +44,7 @@ function capabilityResponse(request: Request) {
     localEditing: true,
     localRendering: true,
     referenceAnalysis: 'progressive',
-    remoteRendering: Boolean((globalThis as any).__env?.RENDER_API_ORIGIN),
+    remoteRendering: Boolean(env.RENDER_API_ORIGIN),
     privacy: 'media stays in the browser unless the user explicitly starts a remote render or provider request',
   }), { headers });
 }
@@ -56,10 +55,7 @@ export default {
     const origin = request.headers.get('Origin');
 
     if (!allowedMethods.has(request.method)) return new Response('Method Not Allowed', { status: 405, headers: cors(origin) });
-
-    if (request.method === 'OPTIONS') {
-      return new Response(null, { status: 204, headers: cors(origin) });
-    }
+    if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors(origin) });
 
     if (!isSameOrigin(request)) {
       return new Response(JSON.stringify({ error: 'cross_origin_request_blocked' }), {
@@ -68,7 +64,7 @@ export default {
       });
     }
 
-    if (url.pathname === '/api/capabilities') return capabilityResponse(request);
+    if (url.pathname === '/api/capabilities') return capabilityResponse(request, env);
 
     if (url.pathname.startsWith('/api/')) {
       if (!env.RENDER_API_ORIGIN) {
