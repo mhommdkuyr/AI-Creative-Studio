@@ -13,24 +13,22 @@ function safeEqual(a: string, b: string) {
   return left.length === right.length && crypto.timingSafeEqual(left, right);
 }
 
-const guard = (req: any, res: any, next: any) => {
-  if (req.path === '/api/health') return next();
+function guard(req: any, res: any, next: any) {
+  if (!String(req.path || '').startsWith('/api/') || req.path === '/api/health') return next();
   const supplied = String(req.header('x-edge-shared-secret') || '');
   if (!safeEqual(supplied, expected)) return res.status(403).json({ error: 'renderer_access_denied' });
   return next();
-};
+}
 
-// Express registers the application routes during the import above. Insert the guard
-// at the beginning of the existing router stack so it runs before those routes.
+// The legacy server registers its routes during import. Wrap the existing layers so
+// the guard is evaluated before every API handler without changing the legacy server.
 const router = (app as any)._router;
 if (!router?.stack) throw new Error('Express router stack is unavailable');
-router.stack.unshift({
-  route: undefined,
-  name: 'edgeSharedSecretGuard',
-  handle: guard,
-  regexp: /^\/?(?=\/|$)/,
-  keys: [],
-});
+for (const layer of router.stack) {
+  if (typeof layer.handle !== 'function') continue;
+  const original = layer.handle;
+  layer.handle = (req: any, res: any, next: any) => guard(req, res, () => original(req, res, next));
+}
 
 const port = Number(process.env.PORT || 10000);
 app.listen(port, '0.0.0.0', () => console.log(`AI Creative Studio secure renderer listening on ${port}`));
