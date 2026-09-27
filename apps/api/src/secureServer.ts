@@ -13,12 +13,23 @@ function safeEqual(a: string, b: string) {
   return left.length === right.length && crypto.timingSafeEqual(left, right);
 }
 
-app.use((req, res, next) => {
-  // Health remains public so the platform can monitor the service.
+const guard = (req: any, res: any, next: any) => {
   if (req.path === '/api/health') return next();
   const supplied = String(req.header('x-edge-shared-secret') || '');
   if (!safeEqual(supplied, expected)) return res.status(403).json({ error: 'renderer_access_denied' });
   return next();
+};
+
+// Express registers the application routes during the import above. Insert the guard
+// at the beginning of the existing router stack so it runs before those routes.
+const router = (app as any)._router;
+if (!router?.stack) throw new Error('Express router stack is unavailable');
+router.stack.unshift({
+  route: undefined,
+  name: 'edgeSharedSecretGuard',
+  handle: guard,
+  regexp: /^\/?(?=\/|$)/,
+  keys: [],
 });
 
 const port = Number(process.env.PORT || 10000);
