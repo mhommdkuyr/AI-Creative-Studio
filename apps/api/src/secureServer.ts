@@ -18,9 +18,9 @@ function safeEqual(a: string, b: string) {
   return left.length === right.length && crypto.timingSafeEqual(left, right);
 }
 
-function readSessionCookie(req: any) {
-  const raw = String(req.header('cookie') || '');
-  const match = raw.match(/(?:^|;\\s*)acs_session=([^;]+)/);
+function readSessionCookie(req: express.Request) {
+  const raw = typeof req.get === 'function' ? String(req.get('cookie') || '') : '';
+  const match = raw.match(/(?:^|;\s*)acs_session=([^;]+)/);
   return match ? String(match[1]) : '';
 }
 
@@ -28,16 +28,24 @@ function createSession() {
   return crypto.randomBytes(24).toString('base64url');
 }
 
-function getSession(req: any, res: any) {
-  const existing = String(req.acsSessionId || readSessionCookie(req) || '');
-  if (/^[A-Za-z0-9_-]{20,100}$/.test(existing)) {
-    req.acsSessionId = existing;
-    return existing;
+function sessionMiddleware(req: express.Request, res: express.Response, next: express.NextFunction) {
+  let sessionId = readSessionCookie(req);
+  if (!/^[A-Za-z0-9_-]{20,100}$/.test(sessionId)) {
+    sessionId = createSession();
+    res.append('Set-Cookie', 'acs_session=' + sessionId + '; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=31536000');
   }
-  const sessionId = createSession();
-  req.acsSessionId = sessionId;
-  res.append('Set-Cookie', 'acs_session=' + sessionId + '; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=31536000');
-  return sessionId;
+
+  if (process.env.EDGE_SHARED_SECRET) {
+    const path = String(req.path || '');
+    if ((path.startsWith('/api/') || path.startsWith('/media/')) && path !== '/api/health') {
+      const supplied = String(req.get('x-edge-shared-secret') || '');
+      if (supplied && !safeEqual(supplied, String(process.env.EDGE_SHARED_SECRET))) {
+        return res.status(403).json({ error: 'renderer_access_denied' });
+      }
+    }
+  }
+
+  return requestContext.run({ sessionId }, next);
 }
 
 function migrateToSessionScopedViews() {
@@ -120,66 +128,23 @@ function migrateToSessionScopedViews() {
 
 migrateToSessionScopedViews();
 
-const expected = process.env.EDGE_SHARED_SECRET || '';
-
-function guard(req: any, res: any, next: any) {
-  const sessionId = getSession(req, res);
-  return requestContext.run({ sessionId }, () => {
-    const path = String(req.originalUrl || req.url || '').split('?')[0];
-
-    if (path.startsWith('/api/') && path !== '/api/health' && expected) {
-      const supplied = String(req.header('x-edge-shared-secret') || '');
-      if (supplied && !safeEqual(supplied, expected)) {
-        return res.status(403).json({ error: 'renderer_access_denied' });
-      }
-    }
-
-    if (path.startsWith('/media/')) {
-      const fileName = basename(decodeURIComponent(path));
-      const row = db.prepare(
-        'SELECT id FROM acs_assets WHERE owner_session=? AND path LIKE ? LIMIT 1'
-      ).get(sessionId, '%/' + fileName) as any;
-      if (!row) return res.status(404).json({ error: 'media_not_found' });
-    }
-
-    return next();
-  });
-}
-
-const router = (app as any)._router;
-if (!router?.stack) throw new Error('Express router stack is unavailable');
-
-const wrapped = new WeakSet<Function>();
-function wrapStack() {
-  for (const layer of router.stack) {
-    if (typeof layer.handle !== 'function' || wrapped.has(layer.handle)) continue;
-    const original = layer.handle;
-    if (original.length === 4) {
-      const wrappedHandle = (err: any, req: any, res: any, next: any) =>
-        guard(req, res, () => original(err, req, res, next));
-      layer.handle = wrappedHandle;
-      wrapped.add(wrappedHandle);
-      continue;
-    }
-    const wrappedHandle = (req: any, res: any, next: any) =>
-      guard(req, res, () => original(req, res, next));
-    layer.handle = wrappedHandle;
-    wrapped.add(wrappedHandle);
-  }
-}
-
-wrapStack();
-
 const webRoot = join(process.cwd(), 'apps/web/dist');
+const publicApp = express();
+publicApp.disable('x-powered-by');
+
+// One real Express middleware executes before the legacy API application.
+// This avoids modifying Express router internals and gives every request a stable
+// session context for the SQLite session-scoped views.
+publicApp.use(sessionMiddleware);
+
+publicApp.use(app);
+
 if (existsSync(webRoot)) {
-  app.use(express.static(webRoot, { index: 'index.html' }));
-  app.get('*', (req: any, res: any, next: any) => {
-    const path = String(req.path || '');
-    if (path.startsWith('/api/') || path.startsWith('/media/')) return next();
-    return res.sendFile(join(webRoot, 'index.html'));
-  });
-  wrapStack();
+  publicApp.use(express.static(webRoot, { index: 'index.html' }));
+  publicApp.get('*', (_req, res) => res.sendFile(join(webRoot, 'index.html')));
 }
 
 const port = Number(process.env.PORT || 10000);
-app.listen(port, '0.0.0.0', () => console.log('AI Creative Studio secure renderer listening on ' + port));
+publicApp.listen(port, '0.0.0.0', () => {
+  console.log('AI Creative Studio secure renderer listening on ' + port);
+});
