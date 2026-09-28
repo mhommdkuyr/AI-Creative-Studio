@@ -53,6 +53,7 @@ import HistoryPage from "./pages/HistoryPage";
 import NotificationsPage from "./pages/NotificationsPage";
 import SettingsPage from "./pages/SettingsPage";
 import DeveloperMode from "./pages/DeveloperMode";
+import PublisherCenter from "./pages/PublisherCenter";
 
 export default function App() {
   // Navigation & UI Layout state
@@ -425,6 +426,8 @@ export default function App() {
         return <SettingsPage />;
       case "developer-mode":
         return <DeveloperMode />;
+      case "publisher-center":
+        return <PublisherCenter />;
       default:
         return (
           <div className="p-8 text-center text-gray-500 font-semibold font-mono">
