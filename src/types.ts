@@ -27,7 +27,8 @@ export type PageId =
   | "history"
   | "notifications"
   | "settings"
-  | "developer-mode";
+  | "developer-mode"
+  | "publisher-center";
 
 export interface Project {
   id: string;
