@@ -16,5 +16,12 @@ jobs:
           cache: npm
       - run: npm install
       - run: npm run build:apps
+      - name: Upload web build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-creative-studio-web-dist
+          path: apps/web/dist
+          if-no-files-found: error
+          retention-days: 3
       - name: Wrangler dry run
         run: npx --yes wrangler deploy --config cloudflare/wrangler.jsonc --dry-run
