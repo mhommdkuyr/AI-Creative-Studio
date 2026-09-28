@@ -154,6 +154,13 @@ function wrapStack() {
   for (const layer of router.stack) {
     if (typeof layer.handle !== 'function' || wrapped.has(layer.handle)) continue;
     const original = layer.handle;
+    if (original.length === 4) {
+      const wrappedHandle = (err: any, req: any, res: any, next: any) =>
+        guard(req, res, () => original(err, req, res, next));
+      layer.handle = wrappedHandle;
+      wrapped.add(wrappedHandle);
+      continue;
+    }
     const wrappedHandle = (req: any, res: any, next: any) =>
       guard(req, res, () => original(req, res, next));
     layer.handle = wrappedHandle;
