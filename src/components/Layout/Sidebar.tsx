@@ -26,6 +26,7 @@ import {
   Clock, 
   Bell, 
   Settings,
+  Send,
   ChevronLeft,
   ChevronRight
 } from "lucide-react";
@@ -95,6 +96,7 @@ export default function Sidebar({
       items: [
         { id: "render-center", label: "Render Queue", icon: Cpu },
         { id: "export-center", label: "Export Presets", icon: Download },
+        { id: "publisher-center", label: "Publish Center", icon: Send },
         { id: "asset-manager", label: "Asset Manager", icon: Files },
         { id: "template-marketplace", label: "Templates Store", icon: ShoppingBag },
         { id: "plugin-center", label: "Plugins Store", icon: Settings },
