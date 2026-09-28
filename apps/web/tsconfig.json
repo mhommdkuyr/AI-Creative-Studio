@@ -5,6 +5,7 @@
     "rootDir": "./src",
     "module": "ESNext",
     "moduleResolution": "bundler",
+    "jsx": "react-jsx",
     "noEmit": true
   },
   "include": ["src/**/*"],
