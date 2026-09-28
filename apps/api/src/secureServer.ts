@@ -3,7 +3,6 @@ import express from 'express';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 
-// Import server.ts only after forcing test mode so its default listener is not started.
 process.env.NODE_ENV = 'test';
 const { app } = await import('./server.js');
 
@@ -17,13 +16,14 @@ function safeEqual(a: string, b: string) {
 }
 
 function guard(req: any, res: any, next: any) {
-  if (!String(req.path || '').startsWith('/api/') || req.path === '/api/health') return next();
+  const path = String(req.path || '');
+  const protectedResource = path.startsWith('/api/') || path.startsWith('/media/');
+  if (!protectedResource || path === '/api/health') return next();
   const supplied = String(req.header('x-edge-shared-secret') || '');
   if (!safeEqual(supplied, expected)) return res.status(403).json({ error: 'renderer_access_denied' });
   return next();
 }
 
-// Guard the legacy API routes before exposing the renderer to the public edge.
 const router = (app as any)._router;
 if (!router?.stack) throw new Error('Express router stack is unavailable');
 for (const layer of router.stack) {
@@ -32,7 +32,6 @@ for (const layer of router.stack) {
   layer.handle = (req: any, res: any, next: any) => guard(req, res, () => original(req, res, next));
 }
 
-// Serve the already-built Vite app from the same origin. The API remains guarded above.
 const webRoot = join(process.cwd(), 'apps/web/dist');
 if (existsSync(webRoot)) {
   app.use(express.static(webRoot, { index: 'index.html' }));
