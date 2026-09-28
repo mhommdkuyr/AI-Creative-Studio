@@ -8,8 +8,10 @@ WORKDIR /app
 COPY package*.json ./
 COPY packages ./packages
 COPY apps/api ./apps/api
+COPY apps/web ./apps/web
 
-RUN npm install --omit=dev --no-audit --no-fund
+RUN npm install --no-audit --no-fund
+RUN npm run build:apps
 
 ENV NODE_ENV=production
 ENV PORT=10000
