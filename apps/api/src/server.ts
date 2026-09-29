@@ -10,6 +10,7 @@ import { registerAIRoute } from './aiRoute.js';
 import { registerPublicAPIRoute } from './publicApiRoute.js';
 import { downloadGoogleDriveMedia, GoogleDriveImportError } from './googleDriveImport.js';
 import { registerPublisherRoutes } from './publisherRoute.js';
+import { registerSocialRoutes } from './socialRoutes.js';
 
 const ROOT = resolve(process.cwd(), '../..');
 const DATA = join(ROOT, 'data');
@@ -947,6 +948,7 @@ app.post('/api/projects/:id/render', (req, res) => {
 registerAIRoute(app, db);
 registerPublicAPIRoute(app, db);
 registerPublisherRoutes(app, db);
+registerSocialRoutes(app, db);
 if (process.env.NODE_ENV !== 'test') {
   const port = Number(process.env.PORT || 10000);
   app.listen(port, '0.0.0.0', () => console.log(`AI Creative Studio API listening on ${port}`));
