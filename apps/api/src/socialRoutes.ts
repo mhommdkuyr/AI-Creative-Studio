@@ -2,6 +2,9 @@ import crypto from "node:crypto";
 import { createReadStream, existsSync, mkdirSync, readFileSync, statSync, unlinkSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
+import { open as openFile } from "node:fs/promises";
+import { pipeline } from "node:stream/promises";
+import { Readable } from "node:stream";
 import express from "express";
 import Database from "better-sqlite3";
 
@@ -128,17 +131,7 @@ async function materializeVideo(req: express.Request, rawUrl: string): Promise<{
   const response = await fetch(target, { headers, redirect: "follow" });
   if (!response.ok || !response.body) throw new Error(`Video download failed (${response.status})`);
 
-  const writer = (await import("node:fs")).createWriteStream(filePath);
-  const reader = response.body.getReader();
-  try {
-    while (true) {
-      const part = await reader.read();
-      if (part.done) break;
-      writer.write(part.value);
-    }
-  } finally {
-    writer.end();
-  }
+  await pipeline(Readable.fromWeb(response.body), createWriteStream(filePath));
 
   const publicUrl = getPublicBase(req) + "/media/social/" + filename;
   return { publicUrl, filePath };
@@ -494,20 +487,28 @@ export function registerSocialRoutes(app: express.Express, db: Database.Database
       if (!uploadUrl || !publishId) throw new Error("TikTok did not return an upload session");
 
       const chunkSize = Math.min(10 * 1024 * 1024, stat.size);
-      const file = readFileSync(materialized.filePath);
-      for (let start = 0; start < file.length; start += chunkSize) {
-        const end = Math.min(file.length, start + chunkSize) - 1;
-        const chunk = file.subarray(start, end + 1);
-        const uploadResponse = await fetch(uploadUrl, {
-          method: "PUT",
-          headers: {
-            "content-type": "video/mp4",
-            "content-length": String(chunk.length),
-            "content-range": `bytes ${start}-${end}/${file.length}`,
-          },
-          body: chunk,
-        });
-        if (!uploadResponse.ok) throw new Error(`TikTok upload failed (${uploadResponse.status})`);
+      const fileHandle = await openFile(materialized.filePath, "r");
+      const buffer = Buffer.allocUnsafe(chunkSize);
+      try {
+        for (let start = 0; start < stat.size;) {
+          const { bytesRead } = await fileHandle.read(buffer, 0, chunkSize, start);
+          if (!bytesRead) break;
+          const end = start + bytesRead - 1;
+          const chunk = buffer.subarray(0, bytesRead);
+          const uploadResponse = await fetch(uploadUrl, {
+            method: "PUT",
+            headers: {
+              "content-type": "video/mp4",
+              "content-length": String(chunk.length),
+              "content-range": `bytes ${start}-${end}/${stat.size}`,
+            },
+            body: chunk,
+          });
+          if (!uploadResponse.ok) throw new Error(`TikTok upload failed (${uploadResponse.status})`);
+          start += bytesRead;
+        }
+      } finally {
+        await fileHandle.close();
       }
 
       let publishStatus: any = null;
