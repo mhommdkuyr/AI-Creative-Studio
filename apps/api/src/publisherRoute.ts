@@ -22,11 +22,16 @@ function getSessionId(req: express.Request): string {
 }
 
 function requireSession(req: express.Request, res: express.Response): string | null {
-  const sessionId = getSessionId(req);
-  if (!sessionId) {
-    res.status(401).json({ error: { code: "session_required", message: "A studio session is required." } });
-    return null;
-  }
+  const existing = getSessionId(req);
+  if (existing) return existing;
+  // The current studio is browser-session based rather than account-authenticated.
+  // Issue a long-lived, HttpOnly/Secure/SameSite cookie so OAuth callbacks and
+  // connected social accounts stay bound to the same browser.
+  const sessionId = randomUUID();
+  res.setHeader(
+    "Set-Cookie",
+    `acs_session=${encodeURIComponent(sessionId)}; Path=/; Max-Age=31536000; HttpOnly; Secure; SameSite=Lax`,
+  );
   return sessionId;
 }
 
