@@ -1,6 +1,11 @@
 import { afterEach, describe, expect, it } from "vitest";
 import request from "supertest";
-import { app } from "./server.js";
+import express from "express";
+import { registerAnimationRoute } from "./animationRoute.js";
+
+const app = express();
+app.use(express.json());
+registerAnimationRoute(app);
 
 const oldOpenAIKey = process.env.OPENAI_API_KEY;
 const oldAnimationToken = process.env.ANIMATION_API_TOKEN;
