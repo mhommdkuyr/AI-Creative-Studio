@@ -10,7 +10,11 @@
     "width": 960,
     "height": 540,
     "codec": "H.264",
-    "frameCount": 300
+    "fps": 24,
+    "sourceFps": 12,
+    "frameCount": 600,
+    "sourceFrames": 300,
+    "interpolation": "frame-blend between each pair of rendered source frames"
   },
   "logicalCoordinateSpace": {
     "width": 1280,
