@@ -1,22 +1,29 @@
 openapi: 3.1.0
 info:
   title: AI Creative Studio - Anime Animation API
-  version: 1.0.0
-  description: Generates an editable 2D anime scene plan with storyboard shots and keyframes.
+  version: 1.1.0
+  description: >
+    Accepts a structured 2D anime plan authored by ChatGPT, normalizes the scene and keyframe data,
+    and returns a browser link that opens that exact plan in Anime Animation Studio.
 servers:
   - url: https://ai-creative-studio-renderer-stable.onrender.com
 paths:
   /api/animation/health:
     get:
       operationId: checkAnimeAnimationEngine
-      summary: Check whether the anime animation engine and AI provider are configured
+      summary: Check whether the deployed anime editor API is configured
       responses:
         "200":
           description: Engine health
   /api/animation/plan:
     post:
       operationId: createAnimeAnimationPlan
-      summary: Turn an anime description into scenes and keyframes
+      summary: Validate a ChatGPT-authored anime plan and return a link that opens it in the editor
+      description: >
+        Create the scenes and keyframes using ChatGPT, then send them in the optional plan field together
+        with the original prompt. The API validates/clamps timing and transforms, normalizes the result,
+        and returns an editorUrl containing the plan. Open that URL to load the animation inside the browser editor.
+        If plan is omitted, the server uses its own configured AI provider or returns a local starter plan.
       security:
         - BearerAuth: []
       requestBody:
@@ -25,28 +32,94 @@ paths:
           application/json:
             schema:
               type: object
+              additionalProperties: false
               required: [prompt]
               properties:
                 prompt:
                   type: string
                   minLength: 1
                   maxLength: 4000
+                  description: The original Arabic or English animation brief.
+                plan:
+                  type: object
+                  description: The structured scene/keyframe plan authored by ChatGPT before calling this Action.
+                  additionalProperties: false
+                  required: [title, logline, visualStyle, fps, width, height, durationSeconds, scenes, keyframes]
+                  properties:
+                    title:
+                      type: string
+                    logline:
+                      type: string
+                    visualStyle:
+                      type: string
+                    fps:
+                      type: integer
+                      enum: [12, 24, 30]
+                    width:
+                      type: integer
+                      enum: [720, 1080, 1920]
+                    height:
+                      type: integer
+                      enum: [720, 1080, 1920]
+                    durationSeconds:
+                      type: number
+                      minimum: 2
+                      maximum: 30
+                    scenes:
+                      type: array
+                      minItems: 1
+                      maxItems: 8
+                      items:
+                        type: object
+                        additionalProperties: false
+                        required: [title, startSeconds, durationSeconds, setting, action, dialogue, camera, mood]
+                        properties:
+                          title: { type: string }
+                          startSeconds: { type: number }
+                          durationSeconds: { type: number }
+                          setting: { type: string }
+                          action: { type: string }
+                          dialogue: { type: string }
+                          camera: { type: string }
+                          mood: { type: string }
+                    keyframes:
+                      type: array
+                      minItems: 2
+                      maxItems: 60
+                      items:
+                        type: object
+                        additionalProperties: false
+                        required: [timeSeconds, x, y, rotation, scale, opacity, expression, label]
+                        properties:
+                          timeSeconds: { type: number }
+                          x: { type: number, minimum: 0, maximum: 100 }
+                          y: { type: number, minimum: 0, maximum: 100 }
+                          rotation: { type: number, minimum: -180, maximum: 180 }
+                          scale: { type: number, minimum: 0.2, maximum: 4 }
+                          opacity: { type: number, minimum: 0, maximum: 1 }
+                          expression:
+                            type: string
+                            enum: [neutral, happy, surprised, sad, determined]
+                          label: { type: string }
       responses:
         "200":
-          description: A plan that can be imported into Anime Animation Studio
+          description: Validated keyframes plus a link that opens the plan in the editor
           content:
             application/json:
               schema:
                 type: object
-                required: [ok, provider, plan]
+                required: [ok, provider, plan, editorUrl]
                 properties:
                   ok:
                     type: boolean
                   provider:
                     type: string
-                    enum: [openai, local]
+                    enum: [chatgpt, openai, local]
                   note:
                     type: string
+                  editorUrl:
+                    type: string
+                    format: uri
                   plan:
                     type: object
         "400":

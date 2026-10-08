@@ -194,13 +194,24 @@ export function registerAnimationRoute(app: any): void {
     const prompt = String(req.body?.prompt || "").trim();
     if (!prompt) return res.status(400).json({ error: "اكتب وصفاً للأنمي أولاً.", code: "PROMPT_REQUIRED" });
     if (prompt.length > 4000) return res.status(413).json({ error: "الوصف طويل جداً؛ الحد الأقصى 4000 حرف.", code: "PROMPT_TOO_LONG" });
-    const aiPlan = await generateWithOpenAI(prompt);
-    const plan = aiPlan || localPlan(prompt);
-    res.json({
-      ok: true,
-      provider: aiPlan ? "openai" : "local",
-      note: aiPlan ? "تم إنشاء خطة التحريك بواسطة مزود الذكاء الاصطناعي." : "خطة أولية محلية؛ أضف OPENAI_API_KEY وANIMATION_API_TOKEN على الخادم لتفعيل التوليد بالذكاء الاصطناعي.",
-      plan
-    });
+    let plan: Plan;
+    let provider: "chatgpt" | "openai" | "local";
+    let note: string;
+    if (req.body?.plan && typeof req.body.plan === "object") {
+      plan = normalizePlan(req.body.plan, prompt);
+      provider = "chatgpt";
+      note = "تم التحقق من الخطة التي أرسلها عميل ChatGPT وتحويلها إلى صيغة المحرك.";
+    } else {
+      const aiPlan = await generateWithOpenAI(prompt);
+      plan = aiPlan || localPlan(prompt);
+      provider = aiPlan ? "openai" : "local";
+      note = aiPlan
+        ? "تم إنشاء خطة التحريك بواسطة مزود الذكاء الاصطناعي على الخادم."
+        : "خطة بداية محلية؛ يمكنك إرسال plan منظّم من ChatGPT أو ضبط OPENAI_API_KEY على الخادم.";
+    }
+    const editorOrigin = (process.env.ANIMATION_EDITOR_URL || "https://anime-animation-studio-web.onrender.com").replace(/\\/+$/, "");
+    const encodedPlan = Buffer.from(JSON.stringify(plan), "utf8").toString("base64url");
+    const editorUrl = editorOrigin + "/animation#ai-anime-plan=" + encodedPlan;
+    res.json({ ok: true, provider, note, plan, editorUrl });
   });
 }

@@ -16,8 +16,9 @@ const STORAGE_KEY = "ai-creative-studio-anime-project-v1";
 
 type AnimationPlanResponse = {
   ok: boolean;
-  provider: "openai" | "local";
+  provider: "chatgpt" | "openai" | "local";
   note?: string;
+  editorUrl?: string;
   plan: {
     title: string;
     logline: string;
@@ -109,6 +110,40 @@ export function AnimationStudioPage() {
   useEffect(() => {
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(project)); } catch {}
   }, [project]);
+
+  useEffect(() => {
+    const marker = "#ai-anime-plan=";
+    const hash = window.location.hash;
+    const markerIndex = hash.indexOf(marker);
+    if (markerIndex < 0) return;
+    try {
+      const encoded = hash.slice(markerIndex + marker.length);
+      const base64 = encoded.replace(/-/g, "+").replace(/_/g, "/");
+      const binary = atob(base64);
+      const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+      const plan = JSON.parse(new TextDecoder().decode(bytes)) as AnimationPlanResponse["plan"];
+      if (!plan || !Array.isArray(plan.scenes) || !Array.isArray(plan.keyframes) || plan.keyframes.length < 2) {
+        throw new Error("خطة الأنمي في الرابط غير مكتملة.");
+      }
+      setProject((current) => ({
+        ...current,
+        name: plan.title || current.name,
+        fps: plan.fps || 24,
+        width: plan.width || 1080,
+        height: plan.height || 1920,
+        durationSeconds: plan.durationSeconds || 8,
+        visualStyle: plan.visualStyle || current.visualStyle,
+        scenes: plan.scenes,
+        character: { ...current.character, keyframes: plan.keyframes }
+      }));
+      setCurrentTime(0);
+      setSelectedKeyframeId(plan.keyframes[0]?.id || "");
+      setStatus("تم تحميل خطة ChatGPT في المحرر؛ يمكنك تعديل الإطارات وتشغيل المعاينة.");
+      window.history.replaceState(null, "", window.location.pathname + window.location.search);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "تعذر تحميل خطة الأنمي من الرابط.");
+    }
+  }, []);
 
   renderRef.current = () => {
     const app = appRef.current;

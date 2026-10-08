@@ -9,7 +9,7 @@ This workspace adds a practical first animation vertical slice to AI Creative St
 - PixiJS preview scene with a built-in vector mascot and import of a PNG/SVG character image.
 - Editable time-based keyframes for position, scale, rotation, opacity, and expression.
 - Storyboard cards and timing.
-- AI plan API at POST /api/animation/plan. With OPENAI_API_KEY on the API server it calls the OpenAI Responses API; otherwise a local fallback makes a starter plan so the UI remains testable.
+- AI plan API at POST /api/animation/plan. The browser UI can use the server-side OpenAI Responses API when `OPENAI_API_KEY` is configured, or a local starter fallback. A Custom GPT Action can instead send the structured plan ChatGPT itself produced; the API normalizes it and returns an editor URL embedding the plan in its fragment, so the browser can open the same scene and keyframes without a separate plan database.
 - Browser WebM recording from the actual PixiJS canvas, plus project JSON export.
 - Basic Spine JSON and DragonBones JSON hierarchy import/export via the neutral rig schema.
 - Validation of missing parents, duplicate bone IDs, invalid slots, and hierarchy cycles.
@@ -29,7 +29,7 @@ This branch prepares two ways to connect an AI client:
 1. The web editor uses the API route directly, where the server owns OPENAI_API_KEY.
 2. A Custom GPT Action can call the deployed API using the OpenAPI schema at `docs/chatgpt-animation-openapi.yaml`. The schema points to `https://ai-creative-studio-renderer-stable.onrender.com`. Before enabling the Action, set a strong `ANIMATION_API_TOKEN` environment variable on the Render API service and configure the same value as HTTP Bearer authentication in the Custom GPT Action.
 
-The current ChatGPT conversation is not automatically linked to a deployed API simply by committing code to GitHub. The API is deployed and an OpenAPI Action schema is prepared, but you must still add that schema as a Custom GPT Action and configure Bearer authentication before ChatGPT can call it. Do not publish `ANIMATION_API_TOKEN` or `OPENAI_API_KEY` in a browser bundle. For prompt-to-plan generation through the server, also set `OPENAI_API_KEY`; without it, the endpoint deliberately returns a local starter plan.
+The current ChatGPT conversation is not automatically linked to a deployed API simply by committing code to GitHub. The API is deployed and its OpenAPI schema is prepared, but you must still add that schema as a Custom GPT Action and configure Bearer authentication. When the Action sends ChatGPT's structured `plan`, a separate `OPENAI_API_KEY` is not required for that plan. The built-in editor's prompt-only server generation does require `OPENAI_API_KEY` for provider-backed generation; otherwise it intentionally falls back to a starter plan. Never place either secret in a browser bundle.
 
 ## Interchange and scope
 
