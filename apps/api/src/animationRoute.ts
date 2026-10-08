@@ -177,7 +177,7 @@ async function generateWithOpenAI(prompt: string): Promise<Plan | null> {
   }
 }
 
-export function registerAnimationRoute(app: any): void {
+export export function registerAnimationRoute(app: any): void {
   app.get("/api/animation/health", (_req: any, res: any) => {
     res.json({
       ok: true,
