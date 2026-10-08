@@ -27,7 +27,7 @@ The endpoint limits prompts to 4000 characters and generated plans to a maximum 
 
 This branch prepares two ways to connect an AI client:
 1. The web editor uses the API route directly, where the server owns OPENAI_API_KEY.
-2. A Custom GPT Action can call the public API using the OpenAPI schema at docs/chatgpt-animation-openapi.yaml. Replace YOUR-API-HOST with the HTTPS origin of the deployed API, then configure HTTP Bearer authentication with the value stored as ANIMATION_API_TOKEN.
+2. A Custom GPT Action can call the deployed API using the OpenAPI schema at `docs/chatgpt-animation-openapi.yaml`. The schema points to `https://ai-creative-studio-renderer-stable.onrender.com`. Before enabling the Action, set a strong `ANIMATION_API_TOKEN` environment variable on the Render API service and configure the same value as HTTP Bearer authentication in the Custom GPT Action.
 
 The current ChatGPT conversation is not automatically linked to a deployed API simply by committing code to GitHub. The API is deployed and an OpenAPI Action schema is prepared, but you must still add that schema as a Custom GPT Action and configure Bearer authentication before ChatGPT can call it. Do not publish `ANIMATION_API_TOKEN` or `OPENAI_API_KEY` in a browser bundle. For prompt-to-plan generation through the server, also set `OPENAI_API_KEY`; without it, the endpoint deliberately returns a local starter plan.
 
