@@ -3,6 +3,7 @@ import { Routes, Route, Navigate } from 'react-router-dom';
 import { Workspace } from './components/workspace/Workspace';
 import { AuthPage } from './pages/AuthPage';
 import { DashboardPage } from './pages/DashboardPage';
+import { AnimationStudioPage } from './pages/AnimationStudioPage';
 import { isSupabaseConfigured, supabase } from './lib/supabase';
 import type { User } from '@supabase/supabase-js';
 
@@ -44,6 +45,11 @@ function App() {
 
   return (
     <Routes>
+      <Route
+        path="/animation"
+        element={<AnimationStudioPage />}
+      />
+      
       <Route
         path="/auth"
         element={canUseDashboard ? <Navigate to="/dashboard" /> : <AuthPage />}
