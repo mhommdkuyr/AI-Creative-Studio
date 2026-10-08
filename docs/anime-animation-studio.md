@@ -29,7 +29,7 @@ This branch prepares two ways to connect an AI client:
 1. The web editor uses the API route directly, where the server owns OPENAI_API_KEY.
 2. A Custom GPT Action can call the public API using the OpenAPI schema at docs/chatgpt-animation-openapi.yaml. Replace YOUR-API-HOST with the HTTPS origin of the deployed API, then configure HTTP Bearer authentication with the value stored as ANIMATION_API_TOKEN.
 
-The current ChatGPT conversation is not automatically linked to a deployed API simply by committing code to GitHub. A deployed HTTPS API and explicit ChatGPT Action/MCP configuration are required for direct external calls. Do not publish ANIMATION_API_TOKEN or OPENAI_API_KEY in a browser bundle.
+The current ChatGPT conversation is not automatically linked to a deployed API simply by committing code to GitHub. The API is deployed and an OpenAPI Action schema is prepared, but you must still add that schema as a Custom GPT Action and configure Bearer authentication before ChatGPT can call it. Do not publish `ANIMATION_API_TOKEN` or `OPENAI_API_KEY` in a browser bundle. For prompt-to-plan generation through the server, also set `OPENAI_API_KEY`; without it, the endpoint deliberately returns a local starter plan.
 
 ## Interchange and scope
 
