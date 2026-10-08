@@ -4,7 +4,7 @@ info:
   version: 1.0.0
   description: Generates an editable 2D anime scene plan with storyboard shots and keyframes.
 servers:
-  - url: https://YOUR-API-HOST
+  - url: https://ai-creative-studio-renderer-stable.onrender.com
 paths:
   /api/animation/health:
     get:
