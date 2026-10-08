@@ -209,7 +209,7 @@ export function registerAnimationRoute(app: any): void {
         ? "تم إنشاء خطة التحريك بواسطة مزود الذكاء الاصطناعي على الخادم."
         : "خطة بداية محلية؛ يمكنك إرسال plan منظّم من ChatGPT أو ضبط OPENAI_API_KEY على الخادم.";
     }
-    const editorOrigin = (process.env.ANIMATION_EDITOR_URL || "https://anime-animation-studio-web.onrender.com").replace(/\\/+$/, "");
+    const editorOrigin = (process.env.ANIMATION_EDITOR_URL || "https://anime-animation-studio-web.onrender.com").replace(/\/+$/, "");
     const encodedPlan = Buffer.from(JSON.stringify(plan), "utf8").toString("base64url");
     const editorUrl = editorOrigin + "/animation#ai-anime-plan=" + encodedPlan;
     res.json({ ok: true, provider, note, plan, editorUrl });
