@@ -1,0 +1,63 @@
+openapi: 3.1.0
+info:
+  title: AI Creative Studio - Anime Animation API
+  version: 1.0.0
+  description: Generates an editable 2D anime scene plan with storyboard shots and keyframes.
+servers:
+  - url: https://YOUR-API-HOST
+paths:
+  /api/animation/health:
+    get:
+      operationId: checkAnimeAnimationEngine
+      summary: Check whether the anime animation engine and AI provider are configured
+      responses:
+        "200":
+          description: Engine health
+  /api/animation/plan:
+    post:
+      operationId: createAnimeAnimationPlan
+      summary: Turn an anime description into scenes and keyframes
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [prompt]
+              properties:
+                prompt:
+                  type: string
+                  minLength: 1
+                  maxLength: 4000
+      responses:
+        "200":
+          description: A plan that can be imported into Anime Animation Studio
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, provider, plan]
+                properties:
+                  ok:
+                    type: boolean
+                  provider:
+                    type: string
+                    enum: [openai, local]
+                  note:
+                    type: string
+                  plan:
+                    type: object
+        "400":
+          description: Missing prompt
+        "401":
+          description: Bearer token invalid
+        "503":
+          description: Production security token not configured
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: ANIMATION_API_TOKEN

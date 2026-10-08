@@ -2,7 +2,7 @@ name: integrated-mvp-ci
 
 on:
   push:
-    branches: [main, integration-mvp-1, commercial-ai-editor-foundation]
+    branches: [main, integration-mvp-1, commercial-ai-editor-foundation, anime-animation-studio]
   pull_request:
 
 jobs:

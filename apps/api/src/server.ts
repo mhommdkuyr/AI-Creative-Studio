@@ -7,6 +7,7 @@ import { randomUUID } from 'node:crypto';
 import { extname, join, resolve, basename } from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { registerAIRoute } from './aiRoute.js';
+import { registerAnimationRoute } from './animationRoute.js';
 import { registerPublicAPIRoute } from './publicApiRoute.js';
 import { downloadGoogleDriveMedia, GoogleDriveImportError } from './googleDriveImport.js';
 
@@ -944,6 +945,7 @@ app.post('/api/projects/:id/render', (req, res) => {
 });
 
 registerAIRoute(app, db);
+registerAnimationRoute(app);
 registerPublicAPIRoute(app, db);
 if (process.env.NODE_ENV !== 'test') {
   const port = Number(process.env.PORT || 10000);

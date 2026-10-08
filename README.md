@@ -35,3 +35,10 @@ Set `OPENAI_API_KEY` to enable the Responses API tool provider. Without it, loca
 ## Architecture direction
 
 `AI-Creative-Studio` is the execution base because it already contains the Timeline, Rendering, Animation, Media, Asset, Project, State and AI engine foundations. The contracts from AI Video Studio are preserved under `packages/shared` and the API/runtime is being hardened around a vertical slice: import → timeline → AI command → undo/redo → MP4 render.
+
+
+## Anime Animation Studio (new development branch)
+
+The new browser-first animation workspace is being developed on the `anime-animation-studio` branch. It adds a PixiJS preview, editable character keyframes, scene cards, a prompt-to-shot-plan API, and basic skeletal JSON interchange for Spine and DragonBones.
+
+See [docs/anime-animation-studio.md](docs/anime-animation-studio.md) for the supported workflows, limitations, deployment variables, and ChatGPT Action connection instructions. The feature branch is intentionally separate from main while CI and integration are checked.
