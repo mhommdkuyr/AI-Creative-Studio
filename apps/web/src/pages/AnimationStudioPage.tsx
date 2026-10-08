@@ -9,7 +9,7 @@ import {
   type AnimeExpression,
   type AnimeKeyframe,
   type AnimeProjectDocument
-} from "@ai-creative-studio/animation-engine";
+} from "@ai-creative-studio/animation-engine/studio";
 
 const API = (import.meta.env.VITE_API_URL || "").replace(/\/$/, "");
 const STORAGE_KEY = "ai-creative-studio-anime-project-v1";
