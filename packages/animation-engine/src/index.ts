@@ -504,4 +504,3 @@ export class AnimationEngine extends BaseEngine {
   }
 }
 
-export * from './studio.js';
