@@ -130,12 +130,17 @@ def finalize_mesh(obj,name,material,bone_name,char_name,bevel=0):
     obj.name=name
     for old in list(obj.users_collection): old.objects.unlink(obj)
     GEO.objects.link(obj)
-    bx=BASE_X[char_name]; obj.location=(bx,0,0); obj.data.materials.append(material)
+    if char_name is None:
+        obj.location=(0,0,0)
+    else:
+        bx=BASE_X[char_name]; obj.location=(bx,0,0)
+    obj.data.materials.append(material)
     for p in obj.data.polygons: p.use_smooth=True
     if bevel and obj.type=="MESH":
         mod=obj.modifiers.new("Soft silhouette edges","BEVEL"); mod.width=bevel; mod.segments=2
         obj.modifiers.new("Weighted normals","WEIGHTED_NORMAL")
-    bind_mesh(obj,bone_name,char_name)
+    if bone_name and char_name:
+        bind_mesh(obj,bone_name,char_name)
     return obj
 
 def sphere(name,center,scale,mat,bone,char,segments=16,rings=12):
@@ -266,10 +271,7 @@ for i in range(17):
 random.seed(11)
 for i in range(24):
     x=random.uniform(-7,7);y=random.uniform(-1,4);z=random.uniform(.5,4.5)
-    o=sphere("VFX_dust_%02d"%i,(x,y,z),(.025,.025,.025),MAT["cyan"] if i%3 else MAT["fire"],None,"DARK",10)
-    # The dust is decorative and not rigged: remove any accidental character binder.
-    for vg in list(o.vertex_groups):o.vertex_groups.remove(vg)
-    for md in list(o.modifiers):o.modifiers.remove(md)
+    o=sphere("VFX_dust_%02d"%i,(x,y,z),(.025,.025,.025),MAT["cyan"] if i%3 else MAT["fire"],None,None,10)
     o.location=(x,y,z);o.keyframe_insert(data_path="location",frame=1)
     o.location.z+=random.uniform(.2,1);o.keyframe_insert(data_path="location",frame=1440)
 
@@ -417,9 +419,7 @@ for i in range(5):
 for i in range(5):
     energy_arc("VFX_gold_beam_%d"%i,MAT["fire"],(.05+i*.09,-.72,2.6-i*.1),i*.55)
 for idx,sec in enumerate([8.1,10.1,13.7,19.0,21.6,24.9,30.8,34.6,38.0,41.0,44.6,48.0,51.0,58.95]):
-    orb=sphere("VFX_hit_orb_%02d"%idx,(0,-.65,2.3),(.1,.1,.1),MAT["cyan"] if idx%2==0 else MAT["fire"],None,"DARK",12)
-    for vg in list(orb.vertex_groups):orb.vertex_groups.remove(vg)
-    for md in list(orb.modifiers):orb.modifiers.remove(md)
+    orb=sphere("VFX_hit_orb_%02d"%idx,(0,-.65,2.3),(.1,.1,.1),MAT["cyan"] if idx%2==0 else MAT["fire"],None,None,12)
     states=[(1,True),(round(max(0,sec-.07)*24)+1,True),(round(sec*24)+1,False),(round((sec+.14)*24)+1,True),(1440,True)]
     key_visibility(orb,states)
     for f,scale in [(max(1,round(sec*24)),(.04,.04,.04)),(round(sec*24)+1,(.7,.25,.7)),(round((sec+.08)*24)+1,(1.2,.2,1.2)),(round((sec+.14)*24)+1,(.02,.02,.02))]:
