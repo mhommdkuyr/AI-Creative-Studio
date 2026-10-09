@@ -494,7 +494,10 @@ sc.frame_start=1; sc.frame_end=1440; sc.render.fps=24; sc.render.fps_base=1.0
 sc.render.filepath=str(OUT/"anime-episode-3d-silent.mp4")
 sc.frame_set(1)
 if os.environ.get("ANIME_SAVE_BLEND","1") == "1":
+    temp_w,temp_h=sc.render.resolution_x,sc.render.resolution_y
+    sc.render.resolution_x,sc.render.resolution_y=960,540
     bpy.ops.wm.save_as_mainfile(filepath=str(OUT/"anime-episode-3d.blend"))
+    sc.render.resolution_x,sc.render.resolution_y=temp_w,temp_h
 render_start=int(os.environ.get("ANIME_FRAME_START","1"))
 render_end=int(os.environ.get("ANIME_FRAME_END","1440"))
 if not (1 <= render_start <= render_end <= 1440):
