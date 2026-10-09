@@ -3,7 +3,7 @@
 This upgrade adds an authored multi-character cutout fight timeline and a Blender 4.2+ scene builder to the downloadable episode package.
 
 ## Full source package
-The complete package includes `scripts/blender_episode2_rig.py`, `scripts/build_episode2_skeletal.py`, `scripts/prepare_rig_parts.py`, per-character PNG cutouts, rig JSON files, 600 joint-angle samples for each of 3 characters, and the rendered MP4. The full executable script is in the package's `scripts/` directory; this repository document tracks scope and motion-source/licensing notes.
+The complete package includes `scripts/blender_episode2_rig.py`, `scripts/build_episode2_skeletal.py`, `scripts/prepare_rig_parts.py`, per-character PNG cutouts, rig JSON files, 600 joint-angle samples for each of 3 characters, and the rendered MP4. The repository also includes a Blender builder at [`tools/blender_episode2_rig.py`](../../tools/blender_episode2_rig.py); the downloadable package version includes the full supplementary ink pass and project-specific render helpers.
 
 ## Fight rig
 - Three character tracks: girl, dark-haired fighter, yellow-haired fighter.
