@@ -463,6 +463,10 @@ for o in list(ENV.objects)+list(VFX.objects):
     key_visibility(o,[(1,False),(1428,False),(1429,True),(1431,True),(1432,False),(1440,False)])
 for f,c in [(1,(.003,.008,.028,1)),(1428,(.003,.008,.028,1)),(1429,(0,0,0,1)),(1431,(0,0,0,1)),(1432,(.003,.008,.028,1)),(1440,(.003,.008,.028,1))]:
     world_bg.inputs["Color"].default_value=c;world_bg.inputs["Color"].keyframe_insert(data_path="default_value",frame=f)
+# Workbench renders World.color instead of the node background; key it too.
+normal_world=tuple(sc.world.color)
+for f,c in [(1,normal_world),(1428,normal_world),(1429,(0,0,0)),(1430,(0,0,0)),(1431,(0,0,0)),(1432,normal_world),(1440,normal_world)]:
+    sc.world.color=c;sc.world.keyframe_insert(data_path="color",frame=f)
 for i in range(34):
     x=random.uniform(-3.2,3.0);z=random.uniform(.3,4.9);dx=random.uniform(.2,1.3);dz=random.uniform(-.55,.55)
     ink=curve_obj("IMPACT_INK_%02d"%i,[(x,-6,z),(x+dx,-6,z+dz)],MAT["blackink"],random.uniform(.008,.02),INK)
@@ -485,8 +489,12 @@ for ob in list(bpy.data.objects):
     if ob.animation_data and ob.animation_data.action:
         set_interpolation(ob.animation_data.action,"hide_render","CONSTANT")
 for m in bpy.data.materials:
+    if m.animation_data and m.animation_data.action:
+        set_interpolation(m.animation_data.action,"diffuse_color","CONSTANT")
     if m.node_tree and m.node_tree.animation_data and m.node_tree.animation_data.action:
         set_interpolation(m.node_tree.animation_data.action,"default_value","CONSTANT")
+if sc.world.animation_data and sc.world.animation_data.action:
+    set_interpolation(sc.world.animation_data.action,"color","CONSTANT")
 
 # Arabic dialogue subtitle cue sheet; speech is synthesized and separately mixed in the workflow.
 def srt_time(sec):
