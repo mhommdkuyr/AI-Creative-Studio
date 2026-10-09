@@ -1,5 +1,8 @@
 name: Render Anime Episode 01
 on:
+  push:
+    paths:
+      - '.github/workflows/render-anime-episode01.yml'
   workflow_dispatch:
     inputs:
       quality:
@@ -38,11 +41,13 @@ jobs:
           if [ "$QUALITY" = "final" ]; then
             export RES=1280
             export PERCENT=100
+            export FRAMES=1440
           else
             export RES=640
             export PERCENT=50
+            export FRAMES=240
           fi
-          blender -b anime3d_episode01_rigged.blend --python-expr "import bpy; s=bpy.context.scene; s.render.resolution_x=int('$RES'); s.render.resolution_y=int(int('$RES')*9/16); s.render.resolution_percentage=int('$PERCENT'); s.render.fps=24; s.frame_start=1; s.frame_end=1440; s.render.image_settings.file_format='PNG'; s.render.filepath='frames/frame_'; import os; os.makedirs('frames',exist_ok=True); bpy.ops.render.render(animation=True)" -- --threads 2
+          blender -b anime3d_episode01_rigged.blend --python-expr "import bpy; s=bpy.context.scene; s.render.resolution_x=int('$RES'); s.render.resolution_y=int(int('$RES')*9/16); s.render.resolution_percentage=int('$PERCENT'); s.render.fps=24; s.frame_start=1; s.frame_end=int('$FRAMES'); s.render.image_settings.file_format='PNG'; s.render.filepath='frames/frame_'; import os; os.makedirs('frames',exist_ok=True); bpy.ops.render.render(animation=True)" -- --threads 2
       - name: Create Arabic dialogue and sound bed
         run: |
           mkdir -p audio
