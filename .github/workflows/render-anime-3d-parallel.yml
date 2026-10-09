@@ -14,7 +14,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   render-chunk:
-    name: Render chunk \${{ matrix.label }}
+    name: Render chunk ${{ matrix.label }}
     runs-on: ubuntu-22.04
     timeout-minutes: 90
     strategy:
@@ -48,33 +48,33 @@ jobs:
         env:
           ANIME_RES_WIDTH: "640"
           ANIME_RES_HEIGHT: "360"
-          ANIME_FRAME_START: "\${{ matrix.start }}"
-          ANIME_FRAME_END: "\${{ matrix.end }}"
-          ANIME_CHUNK_OUTPUT: "\${{ github.workspace }}/output/chunk-\${{ matrix.label }}-silent.mp4"
-          ANIME_SAVE_BLEND: "\${{ matrix.save_blend }}"
+          ANIME_FRAME_START: "${{ matrix.start }}"
+          ANIME_FRAME_END: "${{ matrix.end }}"
+          ANIME_CHUNK_OUTPUT: "${{ github.workspace }}/output/chunk-${{ matrix.label }}-silent.mp4"
+          ANIME_SAVE_BLEND: "${{ matrix.save_blend }}"
         run: |
           set -euo pipefail
           mkdir -p output
           xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 "$BLENDER_BIN" \
             --background --factory-startup --threads 2 \
             --python tools/render_anime_3d_episode_chunked.py \
-            2>&1 | tee "output/blender-chunk-\${{ matrix.label }}.log"
-          test -s "output/chunk-\${{ matrix.label }}-silent.mp4"
+            2>&1 | tee "output/blender-chunk-${{ matrix.label }}.log"
+          test -s "output/chunk-${{ matrix.label }}-silent.mp4"
           frames=$(ffprobe -v error -select_streams v:0 -count_frames -show_entries stream=nb_read_frames \
-            -of default=nokey=1:noprint_wrappers=1 "output/chunk-\${{ matrix.label }}-silent.mp4")
+            -of default=nokey=1:noprint_wrappers=1 "output/chunk-${{ matrix.label }}-silent.mp4")
           duration=$(ffprobe -v error -show_entries format=duration -of default=nokey=1:noprint_wrappers=1 \
-            "output/chunk-\${{ matrix.label }}-silent.mp4")
-          echo "Chunk \${{ matrix.label }}: \${frames} frames, \${duration} seconds"
+            "output/chunk-${{ matrix.label }}-silent.mp4")
+          echo "Chunk ${{ matrix.label }}: \${frames} frames, \${duration} seconds"
           test "$frames" = "240"
           python3 -c "assert 9.95 <= float('$duration') <= 10.10, 'chunk duration mismatch'"
-          echo "PASS chunk \${{ matrix.label }}" | tee "output/CHUNK_VERIFIED.txt"
+          echo "PASS chunk ${{ matrix.label }}" | tee "output/CHUNK_VERIFIED.txt"
       - name: Upload verified chunk
         uses: actions/upload-artifact@v4
         with:
-          name: anime-3d-chunk-\${{ matrix.label }}
+          name: anime-3d-chunk-${{ matrix.label }}
           path: |
-            output/chunk-\${{ matrix.label }}-silent.mp4
-            output/blender-chunk-\${{ matrix.label }}.log
+            output/chunk-${{ matrix.label }}-silent.mp4
+            output/blender-chunk-${{ matrix.label }}.log
             output/CHUNK_VERIFIED.txt
           if-no-files-found: error
           compression-level: 0
@@ -195,7 +195,7 @@ jobs:
       - name: Upload complete video, editable scene, audio and verification reports
         uses: actions/upload-artifact@v4
         with:
-          name: anime-3d-episode-full-parallel-\${{ github.run_number }}
+          name: anime-3d-episode-full-parallel-${{ github.run_number }}
           path: |
             output/anime-episode-3d-full.mp4
             output/anime-episode-3d.blend
