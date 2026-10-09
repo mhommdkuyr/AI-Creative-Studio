@@ -61,7 +61,7 @@ jobs:
           EOF
       - name: Encode MP4 and mix temporary audio
         run: |
-          ffmpeg -y -framerate 24 -i frames/frame_%04d.png -i audio/ambient_battle.wav -c:v libx264 -preset veryfast -pix_fmt yuv420p -vf "scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2" -c:a aac -shortest anime3d_episode01_preview.mp4
+          ffmpeg -y -framerate 24 -i frames/frame_%04d.png -i audio/ambient_battle.wav -i audio/girl.wav -i audio/dark_rival.wav -i audio/blond_rival.wav -i audio/girl_stop.wav -filter_complex "[1:a]volume=0.35[bed];[2:a]adelay=6000|6000,volume=1.5[d1];[3:a]adelay=10000|10000,volume=1.5[d2];[4:a]adelay=13000|13000,volume=1.5[d3];[5:a]adelay=44000|44000,volume=1.5[d4];[bed][d1][d2][d3][d4]amix=inputs=5:duration=longest:dropout_transition=0,alimiter=limit=0.95[a]" -map 0:v -map "[a]" -c:v libx264 -preset veryfast -pix_fmt yuv420p -vf "scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2" -c:a aac -shortest anime3d_episode01_preview.mp4
       - name: Upload render and project files
         uses: actions/upload-artifact@v4
         with:
