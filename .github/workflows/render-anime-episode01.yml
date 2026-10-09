@@ -1,0 +1,74 @@
+name: Render Anime Episode 01
+on:
+  workflow_dispatch:
+    inputs:
+      quality:
+        description: "Render quality"
+        type: choice
+        options: [preview, final]
+        default: preview
+permissions:
+  contents: read
+  actions: write
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - name: Install Blender and audio tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y blender ffmpeg espeak-ng
+      - name: Download authored Blender scene from Google Drive
+        run: |
+          python3 - <<'PY'
+          import urllib.request
+          url = "https://drive.google.com/uc?export=download&id=12n4vPtc21wHSIupIV4y-a7xRcsSpeU8F"
+          req = urllib.request.Request(url, headers={"User-Agent":"Mozilla/5.0"})
+          data = urllib.request.urlopen(req, timeout=120).read()
+          if len(data) < 1000000:
+              raise SystemExit(f"Scene download looks too small ({len(data)} bytes); check Drive permissions.")
+          open("anime3d_episode01_rigged.blend","wb").write(data)
+          print("Downloaded Blender scene:",len(data),"bytes")
+          PY
+      - name: Render animated scene
+        env:
+          QUALITY: ${{ inputs.quality }}
+        run: |
+          if [ "$QUALITY" = "final" ]; then
+            export RES=1280
+            export PERCENT=100
+          else
+            export RES=640
+            export PERCENT=50
+          fi
+          blender -b anime3d_episode01_rigged.blend --python-expr "import bpy; s=bpy.context.scene; s.render.resolution_x=int('$RES'); s.render.resolution_y=int(int('$RES')*9/16); s.render.resolution_percentage=int('$PERCENT'); s.render.fps=24; s.frame_start=1; s.frame_end=1440; s.render.image_settings.file_format='PNG'; s.render.filepath='frames/frame_'; import os; os.makedirs('frames',exist_ok=True); bpy.ops.render.render(animation=True)" -- --threads 2
+      - name: Create Arabic dialogue and sound bed
+        run: |
+          mkdir -p audio
+          espeak-ng -v ar -s 145 -p 45 -w audio/girl.wav "أنا لست جائزة لأحد. سأختار بنفسي."
+          espeak-ng -v ar -s 155 -p 30 -w audio/dark_rival.wav "ابتعد عنها! إن أردت التحدي، واجهني!"
+          espeak-ng -v ar -s 165 -p 60 -w audio/blond_rival.wav "لن أتراجع! أرني قوتك!"
+          espeak-ng -v ar -s 150 -p 40 -w audio/girl_stop.wav "كفى! أنتما لا تفهمان شيئا!"
+          ffmpeg -y -f lavfi -i "sine=frequency=55:duration=60" -f lavfi -i "anoisesrc=color=pink:amplitude=0.03:duration=60" -filter_complex "[0:a]volume=0.08,lowpass=f=90[low];[1:a]volume=0.12,lowpass=f=800[air];[low][air]amix=inputs=2:duration=longest,afade=t=in:d=2,afade=t=out:st=57:d=3[bed]" -map "[bed]" -c:a pcm_s16le audio/ambient_battle.wav
+          # Dialogue timing map is provided for editorial sync; generated voices are synthetic.
+          cat > audio/dialogue_timing.txt <<'EOF'
+          00:06 girl.wav
+          00:10 dark_rival.wav
+          00:13 blond_rival.wav
+          00:44 girl_stop.wav
+          Note: These are synthetic Arabic placeholder voices, not human voice actors.
+          EOF
+      - name: Encode MP4 and mix temporary audio
+        run: |
+          ffmpeg -y -framerate 24 -i frames/frame_%04d.png -i audio/ambient_battle.wav -c:v libx264 -preset veryfast -pix_fmt yuv420p -vf "scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2" -c:a aac -shortest anime3d_episode01_preview.mp4
+      - name: Upload render and project files
+        uses: actions/upload-artifact@v4
+        with:
+          name: anime3d-episode01-${{ inputs.quality }}
+          path: |
+            anime3d_episode01_preview.mp4
+            audio/
+            anime3d_episode01_rigged.blend
+          if-no-files-found: error
+          retention-days: 30
