@@ -1,0 +1,49 @@
+name: Extract fight reference at 3m10s
+on:
+  push:
+    paths:
+      - .github/workflows/extract-fight-reference.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  extract-reference:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install latest yt-dlp
+        run: |
+          python -m pip install --upgrade yt-dlp
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+      - name: Download only the requested reference segment
+        shell: bash
+        run: |
+          set -euo pipefail
+          yt-dlp --version
+          yt-dlp \
+            --no-playlist \
+            --retries 5 \
+            --fragment-retries 5 \
+            --download-sections "*190-205" \
+            --force-keyframes-at-cuts \
+            --merge-output-format mp4 \
+            -f "bv*[height<=720]+ba/b[height<=720]" \
+            -o "/tmp/fight-reference.%(ext)s" \
+            "https://youtu.be/XEtHpGSSTOU"
+          mkdir -p output
+          shopt -s nullglob
+          files=(/tmp/fight-reference.*)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "No clip was downloaded" >&2
+            exit 2
+          fi
+          cp "${files[0]}" output/fight-reference-3m10s.mp4
+          ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1 output/fight-reference-3m10s.mp4
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fight-reference-3m10s
+          path: output/fight-reference-3m10s.mp4
+          if-no-files-found: error
+          retention-days: 3
