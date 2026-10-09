@@ -61,6 +61,7 @@ sc.world.use_nodes=True
 world_bg=sc.world.node_tree.nodes.get("Background")
 world_bg.inputs["Color"].default_value=(.003,.008,.028,1)
 world_bg.inputs["Strength"].default_value=.35
+sc.world.color=(.003,.008,.028)
 
 def material(name, color, metal=0.0, rough=.42, emission=None, emit_strength=1.0):
     m=bpy.data.materials.new(name); m.diffuse_color=(*color,1); m.use_nodes=True
@@ -448,6 +449,9 @@ for m in char_mats:
     m.use_nodes=True;bs=m.node_tree.nodes.get("Principled BSDF")
     if not bs:continue
     normal=tuple(bs.inputs["Base Color"].default_value); enormal=tuple(bs.inputs["Emission Color"].default_value); estr=float(bs.inputs["Emission Strength"].default_value)
+    normal_diffuse=tuple(m.diffuse_color)
+    for f,c in [(1,normal_diffuse),(1428,normal_diffuse),(1429,(1,1,1,1)),(1431,(1,1,1,1)),(1432,normal_diffuse),(1440,normal_diffuse)]:
+        m.diffuse_color=c; m.keyframe_insert(data_path="diffuse_color",frame=f)
     for f,c in [(1,normal),(1428,normal),(1429,(1,1,1,1)),(1431,(1,1,1,1)),(1432,normal),(1440,normal)]:
         bs.inputs["Base Color"].default_value=c;bs.inputs["Base Color"].keyframe_insert(data_path="default_value",frame=f)
     for f,c in [(1,enormal),(1428,enormal),(1429,(1,1,1,1)),(1431,(1,1,1,1)),(1432,enormal),(1440,enormal)]:
