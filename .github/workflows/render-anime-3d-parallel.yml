@@ -1,0 +1,211 @@
+name: Render 60s 3D Anime Episode (Parallel Chunks)
+on:
+  push:
+    branches: [main]
+    paths:
+      - "tools/render_anime_3d_episode_chunked.py"
+      - "tools/generate_anime_audio.py"
+      - ".github/workflows/render-anime-3d-parallel.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: anime-3d-parallel-chunks
+  cancel-in-progress: false
+jobs:
+  render-chunk:
+    name: Render chunk \${{ matrix.label }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {start: 1, end: 240, label: "01", save_blend: "1"}
+          - {start: 241, end: 480, label: "02", save_blend: "0"}
+          - {start: 481, end: 720, label: "03", save_blend: "0"}
+          - {start: 721, end: 960, label: "04", save_blend: "0"}
+          - {start: 961, end: 1200, label: "05", save_blend: "0"}
+          - {start: 1201, end: 1440, label: "06", save_blend: "0"}
+    steps:
+      - name: Checkout project
+        uses: actions/checkout@v4
+      - name: Install render and graphics dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg xvfb libxrender1 libxi6 libxfixes3 libxkbcommon0 libxxf86vm1 libsm6 libice6 libgl1 libegl1 libx11-6 libxext6 libxcb1 libxau6 libxdmcp6
+      - name: Download Blender 4.2 LTS
+        run: |
+          set -euo pipefail
+          curl -fL --retry 4 --retry-delay 3 \
+            https://download.blender.org/release/Blender4.2/blender-4.2.0-linux-x64.tar.xz \
+            -o "$RUNNER_TEMP/blender.tar.xz"
+          tar -xf "$RUNNER_TEMP/blender.tar.xz" -C "$RUNNER_TEMP"
+          echo "BLENDER_BIN=$RUNNER_TEMP/blender-4.2.0-linux-x64/blender" >> "$GITHUB_ENV"
+          "$RUNNER_TEMP/blender-4.2.0-linux-x64/blender" --version | head -n 3
+      - name: Render this 10-second frame range
+        shell: bash
+        env:
+          ANIME_RES_WIDTH: "640"
+          ANIME_RES_HEIGHT: "360"
+          ANIME_FRAME_START: "\${{ matrix.start }}"
+          ANIME_FRAME_END: "\${{ matrix.end }}"
+          ANIME_CHUNK_OUTPUT: "\${{ github.workspace }}/output/chunk-\${{ matrix.label }}-silent.mp4"
+          ANIME_SAVE_BLEND: "\${{ matrix.save_blend }}"
+        run: |
+          set -euo pipefail
+          mkdir -p output
+          xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 "$BLENDER_BIN" \
+            --background --factory-startup --threads 2 \
+            --python tools/render_anime_3d_episode_chunked.py \
+            2>&1 | tee "output/blender-chunk-\${{ matrix.label }}.log"
+          test -s "output/chunk-\${{ matrix.label }}-silent.mp4"
+          frames=$(ffprobe -v error -select_streams v:0 -count_frames -show_entries stream=nb_read_frames \
+            -of default=nokey=1:noprint_wrappers=1 "output/chunk-\${{ matrix.label }}-silent.mp4")
+          duration=$(ffprobe -v error -show_entries format=duration -of default=nokey=1:noprint_wrappers=1 \
+            "output/chunk-\${{ matrix.label }}-silent.mp4")
+          echo "Chunk \${{ matrix.label }}: \${frames} frames, \${duration} seconds"
+          test "$frames" = "240"
+          python3 -c "assert 9.95 <= float('$duration') <= 10.10, 'chunk duration mismatch'"
+          echo "PASS chunk \${{ matrix.label }}" | tee "output/CHUNK_VERIFIED.txt"
+      - name: Upload verified chunk
+        uses: actions/upload-artifact@v4
+        with:
+          name: anime-3d-chunk-\${{ matrix.label }}
+          path: |
+            output/chunk-\${{ matrix.label }}-silent.mp4
+            output/blender-chunk-\${{ matrix.label }}.log
+            output/CHUNK_VERIFIED.txt
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 2
+      - name: Upload editable Blender project from chunk 01
+        if: matrix.label == '01'
+        uses: actions/upload-artifact@v4
+        with:
+          name: anime-3d-source-project
+          path: |
+            output/anime-episode-3d.blend
+            output/episode-script.json
+            output/anime-episode-3d.srt
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+
+  assemble-and-verify:
+    name: Assemble, add Arabic sound, and verify the 60-second master
+    needs: render-chunk
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    steps:
+      - name: Checkout project
+        uses: actions/checkout@v4
+      - name: Install FFmpeg, Arabic TTS and font tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg espeak-ng fonts-noto-core
+          python3 -m pip install --user pillow
+      - name: Download all six verified chunks
+        uses: actions/download-artifact@v4
+        with:
+          pattern: anime-3d-chunk-*
+          path: output/chunks
+          merge-multiple: true
+      - name: Download editable source and timeline
+        uses: actions/download-artifact@v4
+        with:
+          name: anime-3d-source-project
+          path: output
+      - name: Assemble all 1440 frames into the silent master
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s output/anime-episode-3d.blend
+          : > output/chunks.txt
+          for label in 01 02 03 04 05 06; do
+            test -s "output/chunks/chunk-\${label}-silent.mp4"
+            printf "file '%s'\n" "$GITHUB_WORKSPACE/output/chunks/chunk-\${label}-silent.mp4" >> output/chunks.txt
+          done
+          ffmpeg -hide_banner -y -f concat -safe 0 -i output/chunks.txt \
+            -vf "scale=960:540:flags=lanczos,setsar=1" -frames:v 1440 -r 24 \
+            -an -c:v libx264 -preset fast -crf 19 -pix_fmt yuv420p \
+            -movflags +faststart output/anime-episode-3d-silent.mp4
+          test -s output/anime-episode-3d-silent.mp4
+      - name: Generate original score and Arabic character dialogue
+        run: |
+          set -euo pipefail
+          python3 tools/generate_anime_audio.py | tee output/audio-build.log
+          test -s output/anime-episode-3d-audio.wav
+      - name: Mux Arabic speech, soundtrack, and subtitles
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ffmpeg -hide_banner -filters 2>/dev/null | grep -q subtitles; then
+            ffmpeg -hide_banner -y -i output/anime-episode-3d-silent.mp4 -i output/anime-episode-3d-audio.wav \
+              -vf "subtitles=output/anime-episode-3d.srt:fontsdir=/usr/share/fonts/truetype/noto:force_style='FontName=Noto Sans Arabic,FontSize=22,Outline=2,Shadow=1,Alignment=2,MarginV=22'" \
+              -map 0:v:0 -map 1:a:0 -t 60 -c:v libx264 -preset fast -crf 19 -pix_fmt yuv420p -r 24 \
+              -c:a aac -b:a 192k -ar 48000 -ac 2 -movflags +faststart output/anime-episode-3d-full.mp4
+          else
+            ffmpeg -hide_banner -y -i output/anime-episode-3d-silent.mp4 -i output/anime-episode-3d-audio.wav -i output/anime-episode-3d.srt \
+              -map 0:v:0 -map 1:a:0 -map 2:0 -t 60 -c:v libx264 -preset fast -crf 19 -pix_fmt yuv420p -r 24 \
+              -c:a aac -b:a 192k -ar 48000 -ac 2 -c:s mov_text -movflags +faststart output/anime-episode-3d-full.mp4
+          fi
+          test -s output/anime-episode-3d-full.mp4
+      - name: Verify duration, exact frame count, resolution, stereo audio, and impact frames
+        shell: bash
+        run: |
+          set -euo pipefail
+          ffprobe -v error -count_frames -show_streams -show_format -of json output/anime-episode-3d-full.mp4 > output/ffprobe-final.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path("output/anime-episode-3d-full.mp4");d=json.loads(Path("output/ffprobe-final.json").read_text())
+          v=next(s for s in d["streams"] if s.get("codec_type")=="video");a=next((s for s in d["streams"] if s.get("codec_type")=="audio"),None)
+          duration=float(d["format"]["duration"]);frames=int(v.get("nb_read_frames",0))
+          result={"bytes":p.stat().st_size,"duration":duration,"frames":frames,"fps":v.get("avg_frame_rate"),
+            "resolution":[v.get("width"),v.get("height")],"video_codec":v.get("codec_name"),
+            "audio_codec":a.get("codec_name") if a else None,"channels":a.get("channels") if a else None}
+          print(json.dumps(result,indent=2))
+          assert 59.85<=duration<=60.20,f"duration: {duration}"
+          assert frames==1440,f"frames: {frames}"
+          assert v.get("avg_frame_rate")=="24/1","fps mismatch"
+          assert [v.get("width"),v.get("height")]==[960,540],"resolution mismatch"
+          assert a and a.get("channels")==2,"stereo audio is required"
+          assert p.stat().st_size>1_000_000,"video file too small"
+          Path("output/RENDER_VERIFIED.txt").write_text(f"PASS: {duration:.3f}s | {frames} frames | 24fps | 960x540 | stereo audio\n")
+          PY
+          mkdir -p output/impact-check
+          ffmpeg -hide_banner -loglevel error -y -i output/anime-episode-3d-full.mp4 \
+            -vf "select='eq(n,1428)+eq(n,1429)+eq(n,1430)+eq(n,1431)',scale=120:68" -vsync 0 output/impact-check/frame-%02d.png
+          python3 - <<'PY'
+          from PIL import Image
+          from pathlib import Path
+          fs=sorted(Path("output/impact-check").glob("*.png"));assert len(fs)==4,f"expected 4, got {len(fs)}"
+          stats=[]
+          for f in fs:
+            px=list(Image.open(f).convert("RGB").getdata());n=len(px)
+            black=sum(1 for r,g,b in px if r<12 and g<12 and b<12)/n
+            white=sum(1 for r,g,b in px if r>235 and g>235 and b>235)/n
+            chroma=sum(1 for r,g,b in px if max(r,g,b)-min(r,g,b)>45)/n
+            stats.append({"file":f.name,"black":round(black,3),"white":round(white,3),"chroma":round(chroma,3)})
+          print("Impact proof",stats)
+          assert max(x["black"]+x["white"] for x in stats[:3])>.42,"impact frames not monochrome"
+          assert stats[3]["chroma"]>.015,"color did not return after impact frames"
+          PY
+      - name: Upload complete video, editable scene, audio and verification reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: anime-3d-episode-full-parallel-\${{ github.run_number }}
+          path: |
+            output/anime-episode-3d-full.mp4
+            output/anime-episode-3d.blend
+            output/anime-episode-3d.srt
+            output/anime-episode-3d-audio.wav
+            output/episode-script.json
+            output/ffprobe-final.json
+            output/RENDER_VERIFIED.txt
+            output/audio-build.log
+            output/impact-check/*.png
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
