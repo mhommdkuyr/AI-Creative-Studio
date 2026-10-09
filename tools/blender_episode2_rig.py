@@ -97,8 +97,45 @@ def make_background(project_root,coll):
     uv=mesh.uv_layers.new(name="UVMap")
     for lp,coord in zip(uv.data,[(0,1),(1,1),(1,0),(0,0)]): lp.uv=coord
     ob=bpy.data.objects.new("Arena background",mesh); coll.objects.link(ob); ob.data.materials.append(emission_material("Arena plate",path))
-    visibility(ob,[(1,False),(192,False),(193,True),(196,True),(197,False),(600,False)])
+    visibility(ob,[(1,False),(192,False),(193,False),(194,True),(196,True),(197,False),(600,False)])
     return ob
+
+
+def impact_ink(coll):
+    def material(name,color):
+        mat=bpy.data.materials.new(name); mat.use_nodes=True
+        nodes=mat.node_tree.nodes; links=mat.node_tree.links; nodes.clear()
+        out=nodes.new("ShaderNodeOutputMaterial"); em=nodes.new("ShaderNodeEmission")
+        em.inputs["Color"].default_value=(*color,1); em.inputs["Strength"].default_value=1
+        links.new(em.outputs[0],out.inputs["Surface"])
+        return mat
+    ink=material("Impact Ink • Black",(0,0,0)); speed=material("Impact Slash • White",(1,1,1))
+    rng=random.Random(193195)
+    def line(name, pts, mat, width):
+        curve=bpy.data.curves.new(name,"CURVE"); curve.dimensions="3D"; curve.resolution_u=1
+        curve.bevel_depth=width; curve.bevel_resolution=0
+        spline=curve.splines.new("POLY"); spline.points.add(len(pts)-1)
+        for p,co in zip(spline.points,pts): p.co=(co[0],-40,co[1],1)
+        ob=bpy.data.objects.new(name,curve); coll.objects.link(ob); ob.data.materials.append(mat)
+        visibility(ob,[(1,True),(192,True),(193,True),(194,False),(196,False),(197,True),(600,True)])
+        return ob
+    for i in range(50):
+        x=rng.uniform(-150,150); z=rng.uniform(-280,90); length=rng.uniform(10,48); dz=rng.uniform(-12,14)
+        line("Impact hatch %02d"%i,[(x,z),(x+length,z+dz)],ink,rng.choice([.7,1.0,1.4]))
+    for i in range(16):
+        x=rng.uniform(-150,120); z=rng.uniform(-165,95); length=rng.uniform(65,185); dz=rng.uniform(-90,90)
+        line("Impact speed slash %02d"%i,[(x,z),(x+length,z+dz)],speed,rng.uniform(1.0,2.8))
+
+def attach_score(scene, root):
+    sound=os.path.join(root,"output","episode-02-instrumental-sfx.wav")
+    if not os.path.isfile(sound):
+        print("Score WAV missing; save a silent Blender scene:", sound); return
+    try:
+        se=scene.sequence_editor_create()
+        strips=getattr(se,"strips",None) or getattr(se,"sequences",None)
+        strips.new_sound("Original Score and SFX",sound,channel=1,frame_start=1)
+    except Exception as exc:
+        print("Could not attach score automatically:",repr(exc))
 
 def camera_setup(scene,coll):
     data=bpy.data.cameras.new("Cinematic fight camera"); cam=bpy.data.objects.new("CAMERA fight",data); coll.objects.link(cam)
@@ -145,6 +182,7 @@ def main():
     sc.world.color=(0,0,0)
     rigc=link_collection("01 Rigs"); colorc=link_collection("02 Colour Parts"); whitec=link_collection("03 Impact Silhouettes"); envc=link_collection("04 Camera + Arena"); inkm=link_collection("05 Impact Ink"); mocap=link_collection("06 Motion Review Only")
     make_background(root,envc)
+    impact_ink(inkm)
     for char,spec in ep["characters"].items():
         rig=json.load(open(os.path.join(root,spec["rigFile"]),encoding="utf-8")); ax,ay=rig["root_anchor"]
         arm=make_armature(char,rig,rigc); base=float(rig["base_height"])/float(rig["image_size"][1])
@@ -165,7 +203,7 @@ def main():
                 for fc in arm.animation_data.action.fcurves:
                     for kp in fc.keyframe_points: kp.interpolation="LINEAR"
             except Exception: pass
-    camera_setup(sc,envc); import_motion(a,mocap)
+    camera_setup(sc,envc); import_motion(a,mocap); attach_score(sc,root)
     sc.render.image_settings.file_format="PNG"; sc.render.filepath=os.path.join(root,"output","blender-frame-")
     sc.render.image_settings.color_mode="RGBA"; sc.view_settings.view_transform="Standard"
     try: sc.view_settings.look="None"
