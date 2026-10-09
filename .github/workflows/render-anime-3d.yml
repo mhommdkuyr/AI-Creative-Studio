@@ -1,0 +1,142 @@
+name: Render 60s 3D Anime Episode
+on:
+  push:
+    branches: [main]
+    paths:
+      - "tools/render_anime_3d_episode.py"
+      - "tools/generate_anime_audio.py"
+      - ".github/workflows/render-anime-3d.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: anime-3d-full-render
+  cancel-in-progress: false
+jobs:
+  render-full-episode:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 240
+    steps:
+      - name: Checkout project
+        uses: actions/checkout@v4
+      - name: Install render, audio, and Arabic font dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg espeak-ng fonts-noto-core xvfb libxrender1 libxi6 libxfixes3 libxkbcommon0 libxxf86vm1 libsm6 libice6 libgl1 libegl1 libx11-6 libxext6 libxcb1 libxau6 libxdmcp6
+          python3 -m pip install --user pillow
+      - name: Download Blender 4.2 LTS
+        run: |
+          set -euo pipefail
+          curl -fL --retry 4 --retry-delay 3 \
+            https://download.blender.org/release/Blender4.2/blender-4.2.0-linux-x64.tar.xz \
+            -o "$RUNNER_TEMP/blender.tar.xz"
+          tar -xf "$RUNNER_TEMP/blender.tar.xz" -C "$RUNNER_TEMP"
+          echo "BLENDER_BIN=$RUNNER_TEMP/blender-4.2.0-linux-x64/blender" >> "$GITHUB_ENV"
+          "$RUNNER_TEMP/blender-4.2.0-linux-x64/blender" --version | head -n 3
+      - name: Render all 1440 frames in Blender
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p output
+          xvfb-run -a env LIBGL_ALWAYS_SOFTWARE=1 "$BLENDER_BIN" \
+            --background --factory-startup --threads 2 \
+            --python tools/render_anime_3d_episode.py 2>&1 | tee output/blender-render.log
+          test -s output/anime-episode-3d-silent.mp4
+          test -s output/anime-episode-3d.blend
+      - name: Synthesize the original score and Arabic dialogue
+        run: |
+          set -euo pipefail
+          python3 tools/generate_anime_audio.py | tee output/audio-build.log
+          test -s output/anime-episode-3d-audio.wav
+          test -s output/anime-episode-3d.srt
+      - name: Mux dialogue, soundtrack, and Arabic subtitles
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ffmpeg -hide_banner -filters 2>/dev/null | grep -q subtitles; then
+            ffmpeg -hide_banner -y \
+              -i output/anime-episode-3d-silent.mp4 \
+              -i output/anime-episode-3d-audio.wav \
+              -vf "subtitles=output/anime-episode-3d.srt:fontsdir=/usr/share/fonts/truetype/noto:force_style='FontName=Noto Sans Arabic,FontSize=22,Outline=2,Shadow=1,Alignment=2,MarginV=22'" \
+              -map 0:v:0 -map 1:a:0 -t 60 \
+              -c:v libx264 -preset fast -crf 19 -pix_fmt yuv420p -r 24 \
+              -c:a aac -b:a 192k -ar 48000 -ac 2 -movflags +faststart \
+              output/anime-episode-3d-full.mp4
+          else
+            echo "libass subtitle filter unavailable; muxing switchable subtitles as mov_text."
+            ffmpeg -hide_banner -y \
+              -i output/anime-episode-3d-silent.mp4 \
+              -i output/anime-episode-3d-audio.wav \
+              -i output/anime-episode-3d.srt \
+              -map 0:v:0 -map 1:a:0 -map 2:0 -t 60 \
+              -c:v libx264 -preset fast -crf 19 -pix_fmt yuv420p -r 24 \
+              -c:a aac -b:a 192k -ar 48000 -ac 2 -c:s mov_text -movflags +faststart \
+              output/anime-episode-3d-full.mp4
+          fi
+          test -s output/anime-episode-3d-full.mp4
+      - name: Verify final duration, frame count, audio, subtitles and impact cut
+        shell: bash
+        run: |
+          set -euo pipefail
+          ffprobe -v error -count_frames -show_streams -show_format -of json \
+            output/anime-episode-3d-full.mp4 > output/ffprobe-final.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path("output/anime-episode-3d-full.mp4")
+          d=json.loads(Path("output/ffprobe-final.json").read_text())
+          v=next(s for s in d["streams"] if s.get("codec_type")=="video")
+          a=next((s for s in d["streams"] if s.get("codec_type")=="audio"),None)
+          duration=float(d["format"]["duration"])
+          frames=int(v.get("nb_read_frames",0))
+          rate=v.get("avg_frame_rate")
+          print(json.dumps({"file":str(p),"bytes":p.stat().st_size,"duration":duration,
+            "frames":frames,"fps":rate,"resolution":[v.get("width"),v.get("height")],
+            "video_codec":v.get("codec_name"),"audio_codec":a.get("codec_name") if a else None,
+            "audio_channels":a.get("channels") if a else None},indent=2))
+          assert 59.85 <= duration <= 60.20, f"Expected 60s, got {duration}"
+          assert frames == 1440, f"Expected 1440 frames, got {frames}"
+          assert rate == "24/1", f"Expected 24 fps, got {rate}"
+          assert v.get("width")==960 and v.get("height")==540, "Unexpected final resolution"
+          assert a is not None and a.get("channels")==2, "Stereo audio stream is required"
+          assert p.stat().st_size > 1_000_000, "Video file is unexpectedly small"
+          Path("output/RENDER_VERIFIED.txt").write_text(
+            f"PASS: {duration:.3f}s | {frames} frames | 24 fps | 960x540 | stereo audio\n")
+          PY
+          mkdir -p output/impact-check
+          ffmpeg -hide_banner -loglevel error -y -i output/anime-episode-3d-full.mp4 \
+            -vf "select='eq(n,1428)+eq(n,1429)+eq(n,1430)+eq(n,1431)',scale=120:68" \
+            -vsync 0 output/impact-check/frame-%02d.png
+          python3 - <<'PY'
+          from PIL import Image
+          from pathlib import Path
+          files=sorted(Path("output/impact-check").glob("*.png"))
+          assert len(files)==4, f"Expected 4 impact proof frames, found {len(files)}"
+          stats=[]
+          for p in files:
+            pixels=list(Image.open(p).convert("RGB").getdata())
+            black=sum(1 for r,g,b in pixels if r<12 and g<12 and b<12)/len(pixels)
+            white=sum(1 for r,g,b in pixels if r>235 and g>235 and b>235)/len(pixels)
+            chroma=sum(1 for r,g,b in pixels if max(r,g,b)-min(r,g,b)>45)/len(pixels)
+            stats.append({"file":p.name,"black":round(black,3),"white":round(white,3),"chroma":round(chroma,3)})
+          print("Impact frame check:",stats)
+          assert max(x["black"]+x["white"] for x in stats[:3]) > 0.42, "No strong monochrome impact frames detected"
+          assert stats[3]["chroma"] > 0.015, "Colour did not return after the impact frames"
+          PY
+      - name: Upload verified video, editable scene, audio and diagnostic report
+        uses: actions/upload-artifact@v4
+        with:
+          name: anime-3d-episode-full-\${{ github.run_number }}
+          path: |
+            output/anime-episode-3d-full.mp4
+            output/anime-episode-3d.blend
+            output/anime-episode-3d.srt
+            output/anime-episode-3d-audio.wav
+            output/episode-script.json
+            output/ffprobe-final.json
+            output/RENDER_VERIFIED.txt
+            output/blender-render.log
+            output/audio-build.log
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
