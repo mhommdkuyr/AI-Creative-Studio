@@ -16,7 +16,7 @@ jobs:
   render-chunk:
     name: Render chunk ${{ matrix.label }}
     runs-on: ubuntu-22.04
-    timeout-minutes: 90
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
@@ -48,6 +48,7 @@ jobs:
         env:
           ANIME_RES_WIDTH: "640"
           ANIME_RES_HEIGHT: "360"
+          ANIME_RENDER_ENGINE: "BLENDER_WORKBENCH"
           ANIME_FRAME_START: "${{ matrix.start }}"
           ANIME_FRAME_END: "${{ matrix.end }}"
           ANIME_CHUNK_OUTPUT: "${{ github.workspace }}/output/chunk-${{ matrix.label }}-silent.mp4"
