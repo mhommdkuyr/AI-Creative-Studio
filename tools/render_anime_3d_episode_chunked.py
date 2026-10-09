@@ -498,6 +498,24 @@ if os.environ.get("ANIME_SAVE_BLEND","1") == "1":
     sc.render.resolution_x,sc.render.resolution_y=960,540
     bpy.ops.wm.save_as_mainfile(filepath=str(OUT/"anime-episode-3d.blend"))
     sc.render.resolution_x,sc.render.resolution_y=temp_w,temp_h
+# Fast delivery-render mode: preserve the full Eevee scene in the saved .blend,
+# but use Blender Workbench for CPU-only GitHub runners when requested.
+render_engine=os.environ.get("ANIME_RENDER_ENGINE","BLENDER_WORKBENCH")
+if render_engine == "BLENDER_WORKBENCH":
+    sc.render.engine="BLENDER_WORKBENCH"
+    shading=sc.display.shading
+    shading.light="STUDIO"
+    shading.color_type="MATERIAL"
+    shading.studio_light="paint.sl"
+    shading.show_shadows=False
+    shading.show_cavity=True
+    shading.cavity_type="BOTH"
+    shading.curvature_ridge_factor=1.15
+    shading.curvature_valley_factor=1.0
+elif render_engine in {"BLENDER_EEVEE_NEXT","CYCLES","BLENDER_WORKBENCH"}:
+    sc.render.engine=render_engine
+else:
+    raise ValueError("Unsupported ANIME_RENDER_ENGINE="+render_engine)
 render_start=int(os.environ.get("ANIME_FRAME_START","1"))
 render_end=int(os.environ.get("ANIME_FRAME_END","1440"))
 if not (1 <= render_start <= render_end <= 1440):
