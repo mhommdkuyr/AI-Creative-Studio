@@ -7,8 +7,13 @@ describe("60 FPS Anime Combat Manifest & Output Metadata", () => {
   const docManifestPath = resolve(rootDir, "docs", "episodes", "fight-manifest-1080p60.json");
   const outputManifestPath = resolve(rootDir, "output", "fight-manifest-1080p60.json");
   const manifestPath = existsSync(docManifestPath) ? docManifestPath : outputManifestPath;
-  const ffprobePath = resolve(rootDir, "output", "ffprobe-verification.json");
-  const driveReportPath = resolve(rootDir, "output", "google-drive-import-status.json");
+  const docFfprobePath = resolve(rootDir, "docs", "episodes", "ffprobe-verification.json");
+  const outputFfprobePath = resolve(rootDir, "output", "ffprobe-verification.json");
+  const ffprobePath = existsSync(docFfprobePath) ? docFfprobePath : outputFfprobePath;
+
+  const docDriveReportPath = resolve(rootDir, "docs", "episodes", "google-drive-import-status.json");
+  const outputDriveReportPath = resolve(rootDir, "output", "google-drive-import-status.json");
+  const driveReportPath = existsSync(docDriveReportPath) ? docDriveReportPath : outputDriveReportPath;
 
   it("validates fight manifest format, resolution, 60 FPS target, and frame count", () => {
     expect(existsSync(manifestPath)).toBe(true);

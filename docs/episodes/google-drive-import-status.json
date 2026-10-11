@@ -1,0 +1,43 @@
+{
+  "token_configured": false,
+  "files": {
+    "ref_video": {
+      "file_id": "1ygz0hzQNH70VsP8-2DCSFO9OFPg7JB4_",
+      "name": "Red vs Black 2023 (by MicroMist)_720p.mp4",
+      "accessible": false,
+      "status_code": null,
+      "error": "No Google Drive access token configured"
+    },
+    "char_a": {
+      "file_id": "18H3tcZeY4wdtk7ech6nNxi-eDDiMHFp0",
+      "name": "Nightshade J Friedrich.fbx",
+      "accessible": false,
+      "status_code": null,
+      "error": "No Google Drive access token configured"
+    },
+    "char_b": {
+      "file_id": "1b7B-tJXlZ4al_0yeiF9ktY1vLDkgDP9W",
+      "name": "Prisoner B Styperek.fbx",
+      "accessible": false,
+      "status_code": null,
+      "error": "No Google Drive access token configured"
+    },
+    "comfy_workflow": {
+      "file_id": "1zx107T1rKDTjV7_jW_oey59EYgCYWy7l",
+      "name": "ComfyUI_Anime_Combat_Workflow.json",
+      "accessible": false,
+      "status_code": null,
+      "error": "No Google Drive access token configured"
+    },
+    "colab_notebook": {
+      "file_id": "1yq3Ovuc_dGvmHGIyurqiGwyzuI32ndt_",
+      "name": "Anime_Combat_ComfyUI_Colab_T4.ipynb",
+      "accessible": false,
+      "status_code": null,
+      "error": "No Google Drive access token configured"
+    }
+  },
+  "blockers": [
+    "GOOGLE_DRIVE_ACCESS_TOKEN is not configured in the server environment. Direct Google Drive API downloads require OAuth authentication or temporary download URLs."
+  ]
+}
