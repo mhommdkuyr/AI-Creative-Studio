@@ -1,0 +1,14 @@
+{
+  "filepath": "output/anime-fight-full-1080p60.mp4",
+  "width": 1920,
+  "height": 1080,
+  "fps": 60.0,
+  "duration": 10.0,
+  "nb_frames": 600,
+  "video_codec": "h264",
+  "audio_codec": "aac",
+  "audio_channels": 2,
+  "audio_sample_rate": 44100,
+  "decode_verified": true,
+  "full_decode_error": null
+}
