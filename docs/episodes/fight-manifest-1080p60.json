@@ -1,0 +1,467 @@
+{
+  "title": "Nightshade vs Prisoner B: 60 FPS Anime Combat",
+  "logline": "Original high-octane 2D anime duel featuring Nightshade J Friedrich and Prisoner B Styperek at 1080p 60 FPS with supernatural power effects, camera shake, speed lines, and impact frames.",
+  "resolution": [
+    1920,
+    1080
+  ],
+  "fps": 60,
+  "durationSeconds": 10.0,
+  "totalFrames": 600,
+  "characters": {
+    "characterA": {
+      "id": "nightshade",
+      "name": "Nightshade J Friedrich",
+      "identity": "Sleek shadow assassin with dark cloak and dual shadow blades",
+      "palette": {
+        "primary": "#1E1B4B",
+        "secondary": "#4C1D95",
+        "accent": "#8B5CF6",
+        "aura": "#A855F7"
+      }
+    },
+    "characterB": {
+      "id": "prisoner_b",
+      "name": "Prisoner B Styperek",
+      "identity": "Heavy armored gladiator with iron gauntlets and crimson energy",
+      "palette": {
+        "primary": "#450A0A",
+        "secondary": "#7F1D1D",
+        "accent": "#DC2626",
+        "aura": "#EF4444"
+      }
+    }
+  },
+  "shots": [
+    {
+      "id": "shot-1",
+      "title": "Face-Off & Aura Ignition",
+      "startTime": 0.0,
+      "duration": 2.5,
+      "startFrame": 0,
+      "endFrame": 150,
+      "description": "Opposing fighters power up their energy auras as camera pushes in aggressively.",
+      "camera": {
+        "panX": 0,
+        "panY": 0,
+        "zoom": 1.0,
+        "shakeIntensity": 0.0,
+        "pushInRate": 0.15
+      },
+      "keyframes": [
+        {
+          "time": 0.0,
+          "frame": 0,
+          "characterA": {
+            "x": 400,
+            "y": 700,
+            "scale": 1.0,
+            "pose": "guard_stand",
+            "rotation": 0
+          },
+          "characterB": {
+            "x": 1520,
+            "y": 700,
+            "scale": 1.0,
+            "pose": "heavy_stance",
+            "rotation": 0
+          }
+        },
+        {
+          "time": 2.5,
+          "frame": 150,
+          "characterA": {
+            "x": 600,
+            "y": 700,
+            "scale": 1.15,
+            "pose": "shadow_crouch",
+            "rotation": -5
+          },
+          "characterB": {
+            "x": 1320,
+            "y": 700,
+            "scale": 1.15,
+            "pose": "power_charge",
+            "rotation": 5
+          }
+        }
+      ],
+      "effectEvents": [
+        {
+          "time": 0.5,
+          "frame": 30,
+          "type": "aura_flare",
+          "target": "characterA",
+          "color": "#8B5CF6",
+          "radius": 120
+        },
+        {
+          "time": 1.0,
+          "frame": 60,
+          "type": "aura_flare",
+          "target": "characterB",
+          "color": "#EF4444",
+          "radius": 140
+        },
+        {
+          "time": 2.0,
+          "frame": 120,
+          "type": "speed_lines",
+          "intensity": 0.6
+        }
+      ],
+      "audioCues": [
+        {
+          "time": 0.2,
+          "type": "ambient_synth",
+          "duration": 2.3,
+          "volume": 0.6
+        },
+        {
+          "time": 0.5,
+          "type": "energy_hum_violet",
+          "duration": 2.0,
+          "volume": 0.8
+        },
+        {
+          "time": 1.0,
+          "type": "energy_hum_crimson",
+          "duration": 1.5,
+          "volume": 0.8
+        }
+      ]
+    },
+    {
+      "id": "shot-2",
+      "title": "High Velocity Clash & Impact Frames",
+      "startTime": 2.5,
+      "duration": 2.5,
+      "startFrame": 150,
+      "endFrame": 300,
+      "description": "Speed dash towards center, mid-air clash with high-contrast impact frames.",
+      "camera": {
+        "panX": 0,
+        "panY": -50,
+        "zoom": 1.3,
+        "shakeIntensity": 12.0,
+        "pushInRate": 0.0
+      },
+      "keyframes": [
+        {
+          "time": 2.5,
+          "frame": 150,
+          "characterA": {
+            "x": 600,
+            "y": 700,
+            "scale": 1.15,
+            "pose": "dash_forward",
+            "rotation": 15
+          },
+          "characterB": {
+            "x": 1320,
+            "y": 700,
+            "scale": 1.15,
+            "pose": "dash_forward",
+            "rotation": -15
+          }
+        },
+        {
+          "time": 3.2,
+          "frame": 192,
+          "characterA": {
+            "x": 920,
+            "y": 550,
+            "scale": 1.3,
+            "pose": "air_blade_strike",
+            "rotation": 25
+          },
+          "characterB": {
+            "x": 1000,
+            "y": 550,
+            "scale": 1.3,
+            "pose": "iron_block",
+            "rotation": -20
+          }
+        },
+        {
+          "time": 5.0,
+          "frame": 300,
+          "characterA": {
+            "x": 500,
+            "y": 720,
+            "scale": 1.05,
+            "pose": "rebound_land",
+            "rotation": -10
+          },
+          "characterB": {
+            "x": 1420,
+            "y": 720,
+            "scale": 1.05,
+            "pose": "rebound_land",
+            "rotation": 10
+          }
+        }
+      ],
+      "effectEvents": [
+        {
+          "time": 2.6,
+          "frame": 156,
+          "type": "dash_trail",
+          "color": "#8B5CF6"
+        },
+        {
+          "time": 3.2,
+          "frame": 192,
+          "type": "impact_frame",
+          "durationFrames": 3,
+          "mode": "black_white_invert"
+        },
+        {
+          "time": 3.25,
+          "frame": 195,
+          "type": "spark_burst",
+          "color": "#FFFFFF",
+          "particles": 60
+        },
+        {
+          "time": 3.3,
+          "frame": 198,
+          "type": "shockwave_ring",
+          "color": "#F59E0B",
+          "radius": 350
+        }
+      ],
+      "audioCues": [
+        {
+          "time": 2.5,
+          "type": "sonic_boom",
+          "volume": 1.0
+        },
+        {
+          "time": 3.2,
+          "type": "metal_clash_impact",
+          "volume": 1.0
+        },
+        {
+          "time": 3.3,
+          "type": "explosion_bass",
+          "volume": 0.9
+        }
+      ]
+    },
+    {
+      "id": "shot-3",
+      "title": "Supernatural Power Projectile Barrage",
+      "startTime": 5.0,
+      "duration": 2.5,
+      "startFrame": 300,
+      "endFrame": 450,
+      "description": "Nightshade launches violet energy slashes while Prisoner B unleashes a crimson fire shockwave.",
+      "camera": {
+        "panX": 50,
+        "panY": -20,
+        "zoom": 1.25,
+        "shakeIntensity": 8.0,
+        "pushInRate": 0.05
+      },
+      "keyframes": [
+        {
+          "time": 5.0,
+          "frame": 300,
+          "characterA": {
+            "x": 500,
+            "y": 720,
+            "scale": 1.05,
+            "pose": "slash_release",
+            "rotation": -15
+          },
+          "characterB": {
+            "x": 1420,
+            "y": 720,
+            "scale": 1.05,
+            "pose": "ground_slam",
+            "rotation": 15
+          }
+        },
+        {
+          "time": 7.5,
+          "frame": 450,
+          "characterA": {
+            "x": 750,
+            "y": 650,
+            "scale": 1.2,
+            "pose": "aerial_charge",
+            "rotation": 0
+          },
+          "characterB": {
+            "x": 1170,
+            "y": 650,
+            "scale": 1.2,
+            "pose": "overdrive_hook",
+            "rotation": 0
+          }
+        }
+      ],
+      "effectEvents": [
+        {
+          "time": 5.2,
+          "frame": 312,
+          "type": "energy_crescent",
+          "color": "#8B5CF6",
+          "velocity": 1200
+        },
+        {
+          "time": 5.4,
+          "frame": 324,
+          "type": "ground_shockwave",
+          "color": "#EF4444",
+          "width": 800
+        },
+        {
+          "time": 6.2,
+          "frame": 372,
+          "type": "beam_collision",
+          "x": 960,
+          "y": 600,
+          "colorA": "#8B5CF6",
+          "colorB": "#EF4444"
+        }
+      ],
+      "audioCues": [
+        {
+          "time": 5.2,
+          "type": "energy_slash_swoosh",
+          "volume": 0.95
+        },
+        {
+          "time": 5.4,
+          "type": "ground_break_rumble",
+          "volume": 1.0
+        },
+        {
+          "time": 6.2,
+          "type": "beam_clash_loop",
+          "duration": 1.3,
+          "volume": 0.9
+        }
+      ]
+    },
+    {
+      "id": "shot-4",
+      "title": "Climax Double Strike & Dramatic Stance",
+      "startTime": 7.5,
+      "duration": 2.5,
+      "startFrame": 450,
+      "endFrame": 600,
+      "description": "Final cross-strike collision, screen flash, and slow-motion recovery into dual victory stances.",
+      "camera": {
+        "panX": 0,
+        "panY": 0,
+        "zoom": 1.1,
+        "shakeIntensity": 15.0,
+        "pushInRate": -0.05
+      },
+      "keyframes": [
+        {
+          "time": 7.5,
+          "frame": 450,
+          "characterA": {
+            "x": 750,
+            "y": 650,
+            "scale": 1.2,
+            "pose": "finisher_strike",
+            "rotation": 30
+          },
+          "characterB": {
+            "x": 1170,
+            "y": 650,
+            "scale": 1.2,
+            "pose": "finisher_strike",
+            "rotation": -30
+          }
+        },
+        {
+          "time": 8.0,
+          "frame": 480,
+          "characterA": {
+            "x": 1300,
+            "y": 700,
+            "scale": 1.1,
+            "pose": "cross_land_a",
+            "rotation": 0
+          },
+          "characterB": {
+            "x": 620,
+            "y": 700,
+            "scale": 1.1,
+            "pose": "cross_land_b",
+            "rotation": 0
+          }
+        },
+        {
+          "time": 10.0,
+          "frame": 600,
+          "characterA": {
+            "x": 1300,
+            "y": 700,
+            "scale": 1.1,
+            "pose": "stand_back_to_back",
+            "rotation": 0
+          },
+          "characterB": {
+            "x": 620,
+            "y": 700,
+            "scale": 1.1,
+            "pose": "stand_back_to_back",
+            "rotation": 0
+          }
+        }
+      ],
+      "effectEvents": [
+        {
+          "time": 7.6,
+          "frame": 456,
+          "type": "full_screen_flash",
+          "color": "#FFFFFF",
+          "durationFrames": 4
+        },
+        {
+          "time": 7.7,
+          "frame": 462,
+          "type": "impact_cross_lines",
+          "color": "#FBBF24"
+        },
+        {
+          "time": 8.5,
+          "frame": 510,
+          "type": "smoke_dissipate",
+          "color": "#6B7280"
+        }
+      ],
+      "audioCues": [
+        {
+          "time": 7.6,
+          "type": "ultimate_impact_thud",
+          "volume": 1.0
+        },
+        {
+          "time": 8.0,
+          "type": "blade_sheathe_click",
+          "volume": 0.8
+        },
+        {
+          "time": 9.0,
+          "type": "outro_reverb_fade",
+          "duration": 1.0,
+          "volume": 0.7
+        }
+      ]
+    }
+  ],
+  "confidence": {
+    "characterIdentityConsistency": 0.98,
+    "timingAndPacing": 0.96,
+    "frameRateAccuracy": 1.0,
+    "cameraLanguage": 0.95
+  }
+}
