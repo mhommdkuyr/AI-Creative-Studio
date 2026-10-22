@@ -177,6 +177,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install faster-whisper argostranslate deep-translator edge-tts
       - name: Restore offline translation model cache
+        id: argos-cache
         uses: actions/cache/restore@v4
         with:
           path: |
@@ -236,6 +237,15 @@ jobs:
         with:
           path: cache/chunk_${{ matrix.chunk }}/
           key: arabic-dub-v2-${{ needs.prepare.outputs.task_id }}-${{ matrix.chunk }}-${{ hashFiles('scripts/dub_arabic_cpu.py') }}-${{ github.run_id }}
+      - name: Save offline translation model cache
+        if: always() && steps.argos-cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.local/share/argos-translate
+            ~/.local/cache/argos-translate
+          key: arabic-dub-argos-${{ runner.os }}-${{ matrix.chunk }}-${{ github.run_id }}
       - uses: actions/upload-artifact@v4
         if: success()
         with:
