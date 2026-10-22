@@ -427,7 +427,7 @@ def mix_audio_chunks(segments: list[dict[str, Any]], audio_duration: float, chun
             if not wav_path.is_file():
                 continue
             seg_start = float(seg["start"])
-            seg_end = seg_start + media_duration(wav_path)
+            seg_end = seg_start + float(seg.get("fitted_duration_seconds") or media_duration(wav_path))
             if seg_start < chunk_end and seg_end > chunk_start:
                 offset = max(0.0, chunk_start - seg_start)
                 relevant.append((seg, offset))
@@ -595,14 +595,15 @@ def main() -> int:
         checkpoint = prior_by_index.get(segment_index, checkpoint)
         checkpoint.update({"fit_window_seconds": round(window, 3), "atempo": round(atempo, 3), "fitted_sha256": sha256_file(wav_fit)})
         prior_by_index[segment_index] = checkpoint
+        # Persist each completed segment so an interrupted run can resume without re-synthesizing it.
+        atomic_json(translated_segments_path, {
+            "schema": SCHEMA, "audio_sha256": audio_hash,
+            "source_language": source_language, "target_language": "ar",
+            "translation_backend": translation_backend_name,
+            "tts_engine": "Audar-TTS-V1-Flash-Q4_K_M",
+            "segments": [prior_by_index[k] for k in sorted(prior_by_index)],
+        })
         if (i + 1) % 10 == 0:
-            atomic_json(translated_segments_path, {
-                "schema": SCHEMA, "audio_sha256": audio_hash,
-                "source_language": source_language, "target_language": "ar",
-                "translation_backend": translation_backend_name,
-                "tts_engine": "Audar-TTS-V1-Flash-Q4_K_M",
-                "segments": [prior_by_index[k] for k in sorted(prior_by_index)],
-            })
             print(f"Synthesis: {i+1}/{len(diarized_segments)} segments processed", flush=True)
 
     atomic_json(translated_segments_path, {
