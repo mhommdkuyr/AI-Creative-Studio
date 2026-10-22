@@ -40,13 +40,21 @@ jobs:
         env:
           VIDEO_URL: ${{ inputs.video_url }}
           CHUNK_SECONDS: ${{ inputs.chunk_seconds }}
+          YOUTUBE_COOKIES: ${{ secrets.YOUTUBE_COOKIES }}
         run: |
           set -euo pipefail
           if [ "$CHUNK_SECONDS" -lt 120 ] || [ "$CHUNK_SECONDS" -gt 600 ]; then
             echo "chunk_seconds must be between 120 and 600"; exit 2
           fi
           mkdir -p work/chunks work/source
-          yt-dlp --extractor-args "youtube:player_client=android,ios" --no-playlist --no-warnings --format "best[height<=720][ext=mp4]/best[height<=720]/best" --merge-output-format mp4 -o "work/source/source.%(ext)s" "$VIDEO_URL"
+          if [ -z "${YOUTUBE_COOKIES:-}" ]; then
+            echo "::error::YouTube requires authenticated cookies from this GitHub-hosted runner. Add an Actions secret named YOUTUBE_COOKIES containing an exported cookies.txt file; never paste cookies into chat or commit them."
+            exit 2
+          fi
+          printf "%s" "$YOUTUBE_COOKIES" > work/youtube-cookies.txt
+          chmod 600 work/youtube-cookies.txt
+          yt-dlp --cookies work/youtube-cookies.txt --no-playlist --no-warnings --format "best[height<=720][ext=mp4]/best[height<=720]/best" --merge-output-format mp4 -o "work/source/source.%(ext)s" "$VIDEO_URL"
+          rm -f work/youtube-cookies.txt
           SRC="$(find work/source -maxdepth 1 -type f ! -name '*.part' | head -n1)"
           test -n "$SRC"
           ffmpeg -y -i "$SRC" -map 0:v:0 -map 0:a:0? -c copy -movflags +faststart work/source/source.mp4
