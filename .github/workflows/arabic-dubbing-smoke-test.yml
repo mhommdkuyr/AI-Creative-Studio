@@ -5,6 +5,7 @@ on:
   push:
     paths:
       - "scripts/dub_arabic_cpu.py"
+      - "scripts/dub_arabic_multispeaker.py"
       - ".github/workflows/arabic-dubbing-smoke-test.yml"
 
 permissions:
@@ -24,7 +25,7 @@ jobs:
         with:
           python-version: "3.11"
       - name: Compile dubbing and Drive-upload scripts
-        run: python -m py_compile scripts/dub_arabic_cpu.py scripts/upload_google_drive.py
+        run: python -m py_compile scripts/dub_arabic_cpu.py scripts/dub_arabic_multispeaker.py scripts/upload_google_drive.py
       - name: Install FFmpeg and synthetic speech
         run: |
           sudo apt-get update
