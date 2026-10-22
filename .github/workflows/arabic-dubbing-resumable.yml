@@ -35,7 +35,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: arabic-dubbing-resumable-${ github.ref }}
+  group: arabic-dubbing-resumable-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -43,11 +43,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     outputs:
-      chunk_ids: ${ steps.prepare.outputs.chunk_ids }}
-      source_sha256: ${ steps.prepare.outputs.source_sha256 }}
-      normalized_sha256: ${ steps.prepare.outputs.normalized_sha256 }}
-      source_duration: ${ steps.prepare.outputs.source_duration }}
-      task_id: ${ steps.prepare.outputs.task_id }}
+      chunk_ids: ${{ steps.prepare.outputs.chunk_ids }}
+      source_sha256: ${{ steps.prepare.outputs.source_sha256 }}
+      normalized_sha256: ${{ steps.prepare.outputs.normalized_sha256 }}
+      source_duration: ${{ steps.prepare.outputs.source_duration }}
+      task_id: ${{ steps.prepare.outputs.task_id }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -60,8 +60,8 @@ jobs:
           python -m pip install --upgrade pip
       - name: Validate rights confirmation and source URL
         env:
-          SOURCE_URL: ${ inputs.source_url }}
-          RIGHTS_CONFIRMED: ${ inputs.rights_confirmed }}
+          SOURCE_URL: ${{ inputs.source_url }}
+          RIGHTS_CONFIRMED: ${{ inputs.rights_confirmed }}
         run: |
           set -euo pipefail
           python - <<'PY'
@@ -82,10 +82,10 @@ jobs:
       - name: Download, inspect, hash, and split source
         id: prepare
         env:
-          SOURCE_URL: ${ inputs.source_url }}
-          CHUNK_SECONDS: ${ inputs.chunk_seconds }}
-          ASR_MODEL: ${ inputs.asr_model }}
-          ARABIC_VOICE: ${ inputs.arabic_voice }}
+          SOURCE_URL: ${{ inputs.source_url }}
+          CHUNK_SECONDS: ${{ inputs.chunk_seconds }}
+          ASR_MODEL: ${{ inputs.asr_model }}
+          ARABIC_VOICE: ${{ inputs.arabic_voice }}
         run: |
           set -euo pipefail
           mkdir -p work/chunks work/source
@@ -145,13 +145,13 @@ jobs:
           echo "task_id=$TASK_ID" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v4
         with:
-          name: arabic-dub-source-${ steps.prepare.outputs.task_id }}
+          name: arabic-dub-source-${{ steps.prepare.outputs.task_id }}
           path: work/source/
           if-no-files-found: error
           retention-days: 7
       - uses: actions/upload-artifact@v4
         with:
-          name: arabic-dub-audio-chunks-${ steps.prepare.outputs.task_id }}
+          name: arabic-dub-audio-chunks-${{ steps.prepare.outputs.task_id }}
           path: work/chunks/
           if-no-files-found: error
           retention-days: 7
@@ -164,7 +164,7 @@ jobs:
       fail-fast: false
       max-parallel: 2
       matrix:
-        chunk: ${ fromJSON(needs.prepare.outputs.chunk_ids) }}
+        chunk: ${{ fromJSON(needs.prepare.outputs.chunk_ids) }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -181,17 +181,19 @@ jobs:
         id: cache
         uses: actions/cache/restore@v4
         with:
-          path: cache/chunk_${ matrix.chunk }}/
-          key: arabic-dub-v2-${ needs.prepare.outputs.task_id }}-${ matrix.chunk }}-${ hashFiles('scripts/dub_arabic_cpu.py') }}
+          path: cache/chunk_${{ matrix.chunk }}/
+          key: arabic-dub-v2-${{ needs.prepare.outputs.task_id }}-${{ matrix.chunk }}-${{ hashFiles('scripts/dub_arabic_cpu.py') }}-${{ github.run_id }}
+          restore-keys: |
+            arabic-dub-v2-${{ needs.prepare.outputs.task_id }}-${{ matrix.chunk }}-${{ hashFiles('scripts/dub_arabic_cpu.py') }}-
       - uses: actions/download-artifact@v4
         with:
-          name: arabic-dub-audio-chunks-${ needs.prepare.outputs.task_id }}
+          name: arabic-dub-audio-chunks-${{ needs.prepare.outputs.task_id }}
           path: work/chunks
       - name: Resume current chunk only
         env:
-          CHUNK: ${ matrix.chunk }}
-          ASR_MODEL: ${ inputs.asr_model }}
-          ARABIC_VOICE: ${ inputs.arabic_voice }}
+          CHUNK: ${{ matrix.chunk }}
+          ASR_MODEL: ${{ inputs.asr_model }}
+          ARABIC_VOICE: ${{ inputs.arabic_voice }}
         run: |
           set -euo pipefail
           mkdir -p "cache/chunk_$CHUNK" "output/chunk_$CHUNK"
@@ -220,17 +222,17 @@ jobs:
           PY
           cp -a "cache/chunk_$CHUNK/." "output/chunk_$CHUNK/."
       - name: Save partial or completed checkpoint for retry
-        if: ${ always() && steps.cache.outputs.cache-hit != 'true' }}
+        if: ${{ always() && steps.cache.outputs.cache-hit != 'true' }}
         continue-on-error: true
         uses: actions/cache/save@v4
         with:
-          path: cache/chunk_${ matrix.chunk }}/
-          key: arabic-dub-v2-${ needs.prepare.outputs.task_id }}-${ matrix.chunk }}-${ hashFiles('scripts/dub_arabic_cpu.py') }}
+          path: cache/chunk_${{ matrix.chunk }}/
+          key: arabic-dub-v2-${{ needs.prepare.outputs.task_id }}-${{ matrix.chunk }}-${{ hashFiles('scripts/dub_arabic_cpu.py') }}-${{ github.run_id }}
       - uses: actions/upload-artifact@v4
         if: success()
         with:
-          name: arabic-dub-chunk-${ needs.prepare.outputs.task_id }}-${ matrix.chunk }}
-          path: output/chunk_${ matrix.chunk }}/
+          name: arabic-dub-chunk-${{ needs.prepare.outputs.task_id }}-${{ matrix.chunk }}
+          path: output/chunk_${{ matrix.chunk }}/
           if-no-files-found: error
           retention-days: 7
 
@@ -250,24 +252,24 @@ jobs:
           python -m pip install --upgrade pip
       - uses: actions/download-artifact@v4
         with:
-          name: arabic-dub-source-${ needs.prepare.outputs.task_id }}
+          name: arabic-dub-source-${{ needs.prepare.outputs.task_id }}
           path: work/source
       - uses: actions/download-artifact@v4
         with:
-          pattern: arabic-dub-chunk-${ needs.prepare.outputs.task_id }}-*
+          pattern: arabic-dub-chunk-${{ needs.prepare.outputs.task_id }}-*
           path: chunk-artifacts
           merge-multiple: false
       - name: Concatenate, mux, and verify final MP4
         id: verify
         env:
-          CHUNK_IDS: ${ needs.prepare.outputs.chunk_ids }}
-          SOURCE_DURATION: ${ needs.prepare.outputs.source_duration }}
-          SOURCE_SHA256: ${ needs.prepare.outputs.source_sha256 }}
-          NORMALIZED_SHA256: ${ needs.prepare.outputs.normalized_sha256 }}
-          TASK_ID: ${ needs.prepare.outputs.task_id }}
-          CHUNK_SECONDS: ${ inputs.chunk_seconds }}
-          ASR_MODEL: ${ inputs.asr_model }}
-          ARABIC_VOICE: ${ inputs.arabic_voice }}
+          CHUNK_IDS: ${{ needs.prepare.outputs.chunk_ids }}
+          SOURCE_DURATION: ${{ needs.prepare.outputs.source_duration }}
+          SOURCE_SHA256: ${{ needs.prepare.outputs.source_sha256 }}
+          NORMALIZED_SHA256: ${{ needs.prepare.outputs.normalized_sha256 }}
+          TASK_ID: ${{ needs.prepare.outputs.task_id }}
+          CHUNK_SECONDS: ${{ inputs.chunk_seconds }}
+          ASR_MODEL: ${{ inputs.asr_model }}
+          ARABIC_VOICE: ${{ inputs.arabic_voice }}
         run: |
           set -euo pipefail
           mkdir -p output
@@ -278,7 +280,7 @@ jobs:
           if not ids: raise SystemExit("No chunk IDs in render job")
           with open("output/concat.txt","w",encoding="utf-8") as f:
               for c in ids:
-                  p=Path(f"chunk-artifacts/arabic-dub-chunk-{os.environ['TASK_ID']}-{c}/output/chunk_{c}/dub_ar.wav")
+                  p=Path(f"chunk-artifacts/arabic-dub-chunk-{os.environ['TASK_ID']}-{c}/dub_ar.wav")
                   if not p.is_file() or p.stat().st_size < 1000:
                       raise SystemExit(f"Missing/empty dubbed chunk: {c}")
                   probe=json.load(open(p.parent/"dub_probe.json",encoding="utf-8"))
@@ -344,9 +346,9 @@ jobs:
       - name: Upload verified MP4 and report to workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Arabic-Dub-Final-${ needs.prepare.outputs.task_id }}
+          name: Arabic-Dub-Final-${{ needs.prepare.outputs.task_id }}
           path: |
-            output/Arabic_Dub_${ needs.prepare.outputs.task_id }}.mp4
+            output/Arabic_Dub_${{ needs.prepare.outputs.task_id }}.mp4
             output/final_probe.json
             output/run_manifest.json
             output/SHA256SUMS.txt
@@ -357,11 +359,11 @@ jobs:
       - name: Upload verified final MP4 to Google Drive
         id: drive
         env:
-          GOOGLE_DRIVE_CREDENTIALS: ${ secrets.GOOGLE_DRIVE_CREDENTIALS }}
-          GOOGLE_DRIVE_FOLDER_ID: ${ secrets.GOOGLE_DRIVE_FOLDER_ID }}
-          EXPECTED_OUTPUT_SHA256: ${ steps.verify.outputs.final_sha256 }}
-          TASK_ID: ${ needs.prepare.outputs.task_id }}
-          SOURCE_SHA256: ${ needs.prepare.outputs.source_sha256 }}
+          GOOGLE_DRIVE_CREDENTIALS: ${{ secrets.GOOGLE_DRIVE_CREDENTIALS }}
+          GOOGLE_DRIVE_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_FOLDER_ID }}
+          EXPECTED_OUTPUT_SHA256: ${{ steps.verify.outputs.final_sha256 }}
+          TASK_ID: ${{ needs.prepare.outputs.task_id }}
+          SOURCE_SHA256: ${{ needs.prepare.outputs.source_sha256 }}
         run: |
           set -euo pipefail
           if [ -z "$GOOGLE_DRIVE_CREDENTIALS" ] || [ -z "$GOOGLE_DRIVE_FOLDER_ID" ]; then
@@ -377,7 +379,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: Arabic-Dub-Diagnostics-${ needs.prepare.outputs.task_id }}
+          name: Arabic-Dub-Diagnostics-${{ needs.prepare.outputs.task_id }}
           path: |
             output/
             work/source/source_probe.json
