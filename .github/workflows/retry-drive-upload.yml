@@ -1,0 +1,94 @@
+name: Retry Google Drive Upload (without re-dubbing)
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: "GitHub Actions run ID that produced the verified Arabic-Dub-Final artifact"
+        required: true
+        type: string
+      task_id:
+        description: "Task ID from output/run_manifest.json"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  upload:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install FFprobe and FFmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+      - name: Download the previously verified artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: Arabic-Dub-Final-${{ inputs.task_id }}
+          path: artifact
+          run-id: ${{ inputs.source_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Verify existing MP4 and manifest before upload
+        env:
+          TASK_ID: ${{ inputs.task_id }}
+        run: |
+          set -euo pipefail
+          FILE="artifact/Arabic_Dub_$TASK_ID.mp4"
+          test -s "$FILE"
+          test -s artifact/run_manifest.json
+          python - <<'PY'
+          import hashlib,json,os,subprocess
+          task=os.environ["TASK_ID"]
+          manifest=json.load(open("artifact/run_manifest.json",encoding="utf-8"))
+          media=f"artifact/Arabic_Dub_{task}.mp4"
+          if manifest.get("status")!="verified_mp4" or manifest.get("task_id")!=task:
+              raise SystemExit("Artifact manifest is not a verified MP4 for this task ID.")
+          h=hashlib.sha256()
+          with open(media,"rb") as f:
+              for block in iter(lambda:f.read(1024*1024),b""):
+                  h.update(block)
+          digest=h.hexdigest()
+          if digest!=manifest.get("final_sha256"):
+              raise SystemExit("Artifact SHA-256 differs from the verified manifest.")
+          p=json.loads(subprocess.check_output([
+              "ffprobe","-v","error","-show_entries","format=duration,size",
+              "-show_entries","stream=codec_type,codec_name","-of","json",media
+          ],text=True))
+          if float(p["format"].get("duration",0))<=0 or int(p["format"].get("size",0))<1000000:
+              raise SystemExit("Artifact media properties failed verification.")
+          if not any(s.get("codec_type")=="video" for s in p.get("streams",[])):
+              raise SystemExit("Artifact is missing a video stream.")
+          if not any(s.get("codec_type")=="audio" and s.get("codec_name")=="aac" for s in p.get("streams",[])):
+              raise SystemExit("Artifact is missing AAC audio.")
+          with open(os.environ["GITHUB_ENV"],"a",encoding="utf-8") as f:
+              f.write(f"VERIFIED_SHA256={digest}\n")
+              f.write(f"SOURCE_SHA256={manifest['source_sha256']}\n")
+          print("Existing artifact verified; dubbing will not be run again.")
+          PY
+      - name: Upload verified artifact to Google Drive
+        env:
+          GOOGLE_DRIVE_CREDENTIALS: ${{ secrets.GOOGLE_DRIVE_CREDENTIALS }}
+          GOOGLE_DRIVE_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_FOLDER_ID }}
+          EXPECTED_OUTPUT_SHA256: ${{ env.VERIFIED_SHA256 }}
+          TASK_ID: ${{ inputs.task_id }}
+          SOURCE_SHA256: ${{ env.SOURCE_SHA256 }}
+        run: |
+          set -euo pipefail
+          if [ -z "$GOOGLE_DRIVE_CREDENTIALS" ] || [ -z "$GOOGLE_DRIVE_FOLDER_ID" ]; then
+            echo "::error::Set GOOGLE_DRIVE_CREDENTIALS and GOOGLE_DRIVE_FOLDER_ID in repository Actions secrets."
+            exit 2
+          fi
+          python -m pip install --upgrade pip
+          python -m pip install google-api-python-client google-auth google-auth-httplib2
+          python scripts/upload_google_drive.py \
+            --file "artifact/Arabic_Dub_$TASK_ID.mp4" \
+            --task-id "$TASK_ID" --source-sha256 "$SOURCE_SHA256" \
+            --filename "Arabic-Dub-$TASK_ID.mp4"
