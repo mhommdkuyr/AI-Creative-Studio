@@ -1,0 +1,85 @@
+name: Arabic Dubbing (budget-capped CPU)
+
+on:
+  workflow_dispatch:
+    inputs:
+      video_url:
+        description: "Authorized source video URL"
+        required: true
+        default: "https://youtu.be/3G3nD6SYxfo"
+      max_minutes:
+        description: "Hard runtime cap for this run (GitHub Actions minutes)"
+        required: true
+        default: "45"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: arabic-dubbing-{{ github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  dub:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install FFmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+      - name: Install pipeline dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install yt-dlp faster-whisper edge-tts deep-translator pydub
+      - name: Enforce time budget
+        env:
+          MAX_MINUTES: ${{ inputs.max_minutes }}
+        run: |
+          python - <<'PY'
+          import os
+          n=int(os.environ["MAX_MINUTES"])
+          if n < 5 or n > 45:
+              raise SystemExit("max_minutes must be between 5 and 45 to enforce the requested budget")
+          print(f"Runtime cap accepted: {n} minutes; CPU-only, no paid external API.")
+          PY
+      - name: Inspect source and prepare audio
+        env:
+          VIDEO_URL: ${{ inputs.video_url }}
+          MAX_MINUTES: ${{ inputs.max_minutes }}
+        run: |
+          mkdir -p work output
+          timeout "${MAX_MINUTES}m" yt-dlp --no-playlist --no-warnings --format "best[height<=720]/best" --merge-output-format mp4 -o "work/source.%(ext)s" "$VIDEO_URL"
+          VIDEO="$(find work -maxdepth 1 -type f -name 'source.*' ! -name '*.part' | head -n1)"
+          test -n "$VIDEO"
+          ffprobe -v error -show_entries format=duration,size -of json "$VIDEO" | tee output/source_probe.json
+          ffmpeg -y -i "$VIDEO" -vn -ac 1 -ar 16000 work/source.wav
+          echo "$VIDEO" > work/source_path.txt
+      - name: Transcribe and create Arabic dub draft
+        env:
+          MAX_MINUTES: ${{ inputs.max_minutes }}
+        run: |
+          timeout "${MAX_MINUTES}m" python scripts/dub_arabic_cpu.py --audio work/source.wav --out output --model small --voice ar-SA-HamedNeural
+      - name: Render and verify MP4
+        env:
+          MAX_MINUTES: ${{ inputs.max_minutes }}
+        run: |
+          VIDEO="$(cat work/source_path.txt)"
+          test -f output/dub_ar.wav
+          ffmpeg -y -i "$VIDEO" -i output/dub_ar.wav -map 0:v:0 -map 1:a:0 -c:v libx264 -preset ultrafast -crf 28 -c:a aac -b:a 128k -shortest -movflags +faststart output/Arabic_Dub_Draft.mp4
+          ffprobe -v error -show_entries format=duration,size -of json output/Arabic_Dub_Draft.mp4 | tee output/final_probe.json
+          test "$(stat -c%s output/Arabic_Dub_Draft.mp4)" -gt 100000
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: arabic-dubbing-draft
+          path: |
+            output/
+            work/source_path.txt
+          if-no-files-found: warn
+          retention-days: 3
