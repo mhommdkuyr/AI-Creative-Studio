@@ -23,7 +23,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-          cache: pip
+      - name: Compile dubbing and Drive-upload scripts
+        run: python -m py_compile scripts/dub_arabic_cpu.py scripts/upload_google_drive.py
       - name: Install FFmpeg and synthetic speech
         run: |
           sudo apt-get update
