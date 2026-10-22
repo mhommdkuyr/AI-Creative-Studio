@@ -57,7 +57,6 @@ jobs:
           ids=[os.path.basename(p).replace("chunk_","").replace(".flac","") for p in sorted(glob.glob("work/chunks/chunk_*.flac"))]
           if not ids: raise SystemExit("No audio chunks were generated")
           print("chunk_ids="+json.dumps(ids))
-          print("Chunk count:",len(ids))
           PY
       - uses: actions/upload-artifact@v4
         with:
