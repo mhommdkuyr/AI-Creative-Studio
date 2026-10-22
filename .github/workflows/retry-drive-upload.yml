@@ -37,7 +37,7 @@ jobs:
           run-id: ${{ inputs.source_run_id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Verify existing MP4 and manifest before upload
-        id: verify-artifact
+        id: verify_artifact
         env:
           TASK_ID: ${{ inputs.task_id }}
         run: |
@@ -78,9 +78,9 @@ jobs:
         env:
           GOOGLE_DRIVE_CREDENTIALS: ${{ secrets.GOOGLE_DRIVE_CREDENTIALS }}
           GOOGLE_DRIVE_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_FOLDER_ID }}
-          EXPECTED_OUTPUT_SHA256: ${{ steps.verify-artifact.outputs.verified_sha256 }}
+          EXPECTED_OUTPUT_SHA256: ${{ steps.verify_artifact.outputs.verified_sha256 }}
           TASK_ID: ${{ inputs.task_id }}
-          SOURCE_SHA256: ${{ steps.verify-artifact.outputs.source_sha256 }}
+          SOURCE_SHA256: ${{ steps.verify_artifact.outputs.source_sha256 }}
         run: |
           set -euo pipefail
           if [ -z "$GOOGLE_DRIVE_CREDENTIALS" ] || [ -z "$GOOGLE_DRIVE_FOLDER_ID" ]; then
