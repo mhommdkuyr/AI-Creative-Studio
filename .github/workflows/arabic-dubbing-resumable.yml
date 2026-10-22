@@ -1,0 +1,201 @@
+name: Arabic Dubbing (resumable chunks, CPU-only)
+
+on:
+  workflow_dispatch:
+    inputs:
+      video_url:
+        description: "Authorized source video URL"
+        required: true
+        default: "https://youtu.be/3G3nD6SYxfo"
+      chunk_seconds:
+        description: "Chunk size in seconds (keep 300 for resumability)"
+        required: true
+        default: "300"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: arabic-dubbing-resumable-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    outputs:
+      chunk_ids: ${{ steps.chunks.outputs.chunk_ids }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install media tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+          python -m pip install --upgrade pip
+          pip install yt-dlp
+      - name: Download source and split audio into checkpointable chunks
+        env:
+          VIDEO_URL: ${{ inputs.video_url }}
+          CHUNK_SECONDS: ${{ inputs.chunk_seconds }}
+        run: |
+          set -euo pipefail
+          if [ "$CHUNK_SECONDS" -lt 120 ] || [ "$CHUNK_SECONDS" -gt 600 ]; then
+            echo "chunk_seconds must be between 120 and 600"; exit 2
+          fi
+          mkdir -p work/chunks work/source
+          yt-dlp --no-playlist --no-warnings --format "best[height<=720][ext=mp4]/best[height<=720]/best" --merge-output-format mp4 -o "work/source/source.%(ext)s" "$VIDEO_URL"
+          SRC="$(find work/source -maxdepth 1 -type f ! -name '*.part' | head -n1)"
+          test -n "$SRC"
+          ffmpeg -y -i "$SRC" -map 0:v:0 -map 0:a:0? -c copy -movflags +faststart work/source/source.mp4
+          ffprobe -v error -show_entries format=duration,size -of json work/source/source.mp4 | tee work/source/source_probe.json
+          ffmpeg -y -i work/source/source.mp4 -vn -ac 1 -ar 16000 -f segment -segment_time "$CHUNK_SECONDS" -reset_timestamps 1 work/chunks/chunk_%03d.flac
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import glob,json,os
+          ids=[os.path.basename(p).replace("chunk_","").replace(".flac","") for p in sorted(glob.glob("work/chunks/chunk_*.flac"))]
+          if not ids: raise SystemExit("No audio chunks were generated")
+          print("chunk_ids="+json.dumps(ids))
+          print("Chunk count:",len(ids))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: arabic-dub-source-video
+          path: work/source/
+          if-no-files-found: error
+          retention-days: 3
+      - uses: actions/upload-artifact@v4
+        with:
+          name: arabic-dub-audio-chunks
+          path: work/chunks/
+          if-no-files-found: error
+          retention-days: 3
+
+  dub-chunks:
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        chunk: ${{ fromJSON(needs.prepare.outputs.chunk_ids) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install FFmpeg and dubbing dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+          python -m pip install --upgrade pip
+          pip install faster-whisper deep-translator edge-tts
+      - name: Restore this chunk checkpoint
+        id: cache
+        uses: actions/cache/restore@v4
+        with:
+          path: cache/chunk_${{ matrix.chunk }}/
+          key: arabic-dub-v1-${{ matrix.chunk }}-${{ hashFiles('scripts/dub_arabic_cpu.py') }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: arabic-dub-audio-chunks
+          path: work/chunks
+      - name: Process chunk only if checkpoint is absent
+        env:
+          CHUNK: ${{ matrix.chunk }}
+        run: |
+          set -euo pipefail
+          mkdir -p "cache/chunk_${CHUNK}" "output/chunk_${CHUNK}"
+          if [ -s "cache/chunk_${CHUNK}/dub_ar.wav" ] && [ -s "cache/chunk_${CHUNK}/draft_manifest.json" ]; then
+            echo "Using completed cached chunk ${CHUNK}"
+            cp "cache/chunk_${CHUNK}/"* "output/chunk_${CHUNK}/"
+            exit 0
+          fi
+          python scripts/dub_arabic_cpu.py --audio "work/chunks/chunk_${CHUNK}.flac" --out "output/chunk_${CHUNK}" --model small --voice ar-SA-HamedNeural
+          DURATION="$(ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "work/chunks/chunk_${CHUNK}.flac")"
+          ffmpeg -y -i "output/chunk_${CHUNK}/dub_ar.wav" -af apad -t "$DURATION" -ac 2 -ar 48000 "cache/chunk_${CHUNK}/dub_ar.wav"
+          cp "output/chunk_${CHUNK}/draft_manifest.json" "cache/chunk_${CHUNK}/draft_manifest.json"
+          cp "output/chunk_${CHUNK}/transcript_source.json" "cache/chunk_${CHUNK}/transcript_source.json"
+          cp "output/chunk_${CHUNK}/transcript_ar.json" "cache/chunk_${CHUNK}/transcript_ar.json"
+      - name: Save completed chunk checkpoint
+        if: success() && steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: cache/chunk_${{ matrix.chunk }}/
+          key: arabic-dub-v1-${{ matrix.chunk }}-${{ hashFiles('scripts/dub_arabic_cpu.py') }}
+      - name: Upload completed chunk
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: arabic-dub-chunk-${{ matrix.chunk }}
+          path: |
+            output/chunk_${{ matrix.chunk }}/
+            cache/chunk_${{ matrix.chunk }}/
+          if-no-files-found: error
+          retention-days: 3
+
+  render:
+    needs: [prepare, dub-chunks]
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install FFmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+      - uses: actions/download-artifact@v4
+        with:
+          name: arabic-dub-source-video
+          path: work/source
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: arabic-dub-chunk-*
+          path: chunk-artifacts
+          merge-multiple: false
+      - name: Concatenate, mux, and validate final MP4
+        env:
+          CHUNK_IDS: ${{ needs.prepare.outputs.chunk_ids }}
+        run: |
+          set -euo pipefail
+          mkdir -p output
+          python - <<'PY'
+          import json,os
+          ids=json.loads(os.environ["CHUNK_IDS"])
+          with open("output/concat.txt","w",encoding="utf-8") as f:
+              for chunk in ids:
+                  p=f"chunk-artifacts/arabic-dub-chunk-{chunk}/cache/chunk_{chunk}/dub_ar.wav"
+                  if not os.path.isfile(p):
+                      p=f"chunk-artifacts/arabic-dub-chunk-{chunk}/output/chunk_{chunk}/dub_ar.wav"
+                  if not os.path.isfile(p) or os.path.getsize(p)<1000:
+                      raise SystemExit(f"Missing/empty dubbed chunk: {chunk}")
+                  f.write("file '"+os.path.abspath(p).replace("'","'\\''")+"\\n")
+          print("Chunks verified:",len(ids))
+          PY
+          ffmpeg -y -f concat -safe 0 -i output/concat.txt -c:a pcm_s16le output/dub_ar.wav
+          ffmpeg -y -i work/source/source.mp4 -i output/dub_ar.wav -map 0:v:0 -map 1:a:0 -c:v libx264 -preset ultrafast -crf 28 -c:a aac -b:a 128k -shortest -movflags +faststart output/Arabic_Dub_Draft.mp4
+          ffprobe -v error -show_entries format=duration,size -show_entries stream=codec_type,width,height,sample_rate -of json output/Arabic_Dub_Draft.mp4 | tee output/final_probe.json
+          python - <<'PY'
+          import json,os
+          p=json.load(open("output/final_probe.json"))
+          d=float(p["format"]["duration"]); size=int(p["format"]["size"])
+          streams=p.get("streams",[])
+          if d<7200: raise SystemExit(f"Final duration too short: {d}s")
+          if size<1000000: raise SystemExit(f"Final MP4 too small: {size} bytes")
+          if not any(s.get("codec_type")=="video" for s in streams): raise SystemExit("No video stream")
+          if not any(s.get("codec_type")=="audio" for s in streams): raise SystemExit("No audio stream")
+          print(f"Validated MP4: {d:.1f}s, {size} bytes")
+          PY
+          sha256sum output/Arabic_Dub_Draft.mp4 | tee output/SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Arabic-Dub-Final-MP4
+          path: output/
+          if-no-files-found: error
+          retention-days: 3
