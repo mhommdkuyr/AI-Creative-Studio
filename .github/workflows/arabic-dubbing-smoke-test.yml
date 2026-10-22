@@ -83,7 +83,7 @@ jobs:
           ffmpeg -y -v error -i output/smoke/dub/dub_ar.wav \
             -af "apad,atrim=duration=20" -ac 2 -ar 48000 output/smoke/dub_ar.wav.tmp.wav
           mv output/smoke/dub_ar.wav.tmp.wav output/smoke/dub_ar.wav
-          ffmpeg -y -v error -i work/smoke/original_test.mp4 -i output/smoke/dub/dub_ar.wav \
+          ffmpeg -y -v error -i work/smoke/original_test.mp4 -i output/smoke/dub_ar.wav \
             -map 0:v:0 -map 1:a:0 -c:v copy -c:a aac -b:a 96k -shortest \
             -movflags +faststart output/smoke/Arabic_Dub_Smoke_Test.mp4
           ffprobe -v error -show_entries format=duration,size \
