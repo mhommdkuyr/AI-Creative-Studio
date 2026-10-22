@@ -1,0 +1,109 @@
+name: Arabic Dubbing Engine Smoke Test
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "scripts/dub_arabic_cpu.py"
+      - ".github/workflows/arabic-dubbing-smoke-test.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: arabic-dubbing-smoke-${ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install FFmpeg and synthetic speech
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg espeak-ng
+          python -m pip install --upgrade pip
+          pip install faster-whisper deep-translator edge-tts
+      - name: Restore tiny Whisper model cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: arabic-dubbing-smoke-whisper-tiny-${ runner.os }}
+          restore-keys: |
+            arabic-dubbing-smoke-whisper-tiny-${ runner.os }}-
+      - name: Create an original synthetic test clip (no external media)
+        run: |
+          set -euo pipefail
+          mkdir -p work/smoke output/smoke
+          espeak-ng -v en-us -s 135 -w work/smoke/source_speech.wav \
+            "Hello. This is an original synthetic speech sample for testing an Arabic dubbing pipeline. The source is a test clip, not a television episode."
+          ffmpeg -y -v error \
+            -f lavfi -i "color=c=navy:s=640x360:r=24:d=20" \
+            -i work/smoke/source_speech.wav \
+            -map 0:v:0 -map 1:a:0 -af "apad,atrim=duration=20" -t 20 \
+            -c:v libx264 -preset ultrafast -pix_fmt yuv420p \
+            -c:a aac -b:a 96k -movflags +faststart work/smoke/original_test.mp4
+          ffmpeg -y -v error -i work/smoke/original_test.mp4 \
+            -vn -ac 1 -ar 16000 -c:a flac work/smoke/source.flac
+          ffprobe -v error -show_entries format=duration,size -of json work/smoke/original_test.mp4 > work/smoke/source_probe.json
+      - name: Test ASR, Arabic translation, TTS, and per-segment resume
+        run: |
+          set -euo pipefail
+          python scripts/dub_arabic_cpu.py \
+            --audio work/smoke/source.flac \
+            --out output/smoke/dub \
+            --model tiny \
+            --voice ar-SA-HamedNeural \
+            --translation-retries 3 \
+            --tts-retries 2
+          test -s output/smoke/dub/dub_ar.wav
+          test -s output/smoke/dub/transcript_source.json
+          test -s output/smoke/dub/transcript_ar.json
+          test -s output/smoke/dub/draft_manifest.json
+          # Re-run to confirm that valid per-segment/ASR checkpoints are reusable.
+          python scripts/dub_arabic_cpu.py \
+            --audio work/smoke/source.flac \
+            --out output/smoke/dub \
+            --model tiny \
+            --voice ar-SA-HamedNeural \
+            --translation-retries 3 \
+            --tts-retries 2
+      - name: Mux and decode-check the synthetic result
+        run: |
+          set -euo pipefail
+          ffmpeg -y -v error -i output/smoke/dub/dub_ar.wav \
+            -af "apad,atrim=duration=20" -ac 2 -ar 48000 output/smoke/dub_ar.wav.tmp.wav
+          mv output/smoke/dub_ar.wav.tmp.wav output/smoke/dub_ar.wav
+          ffmpeg -y -v error -i work/smoke/original_test.mp4 -i output/smoke/dub/dub_ar.wav \
+            -map 0:v:0 -map 1:a:0 -c:v copy -c:a aac -b:a 96k -shortest \
+            -movflags +faststart output/smoke/Arabic_Dub_Smoke_Test.mp4
+          ffprobe -v error -show_entries format=duration,size \
+            -show_entries stream=codec_type,codec_name -of json \
+            output/smoke/Arabic_Dub_Smoke_Test.mp4 | tee output/smoke/final_probe.json
+          ffmpeg -v error -i output/smoke/Arabic_Dub_Smoke_Test.mp4 -f null -
+          python - <<'PY'
+          import json,os
+          p=json.load(open("output/smoke/final_probe.json",encoding="utf-8"))
+          if float(p["format"].get("duration",0)) < 19.5:
+              raise SystemExit("Smoke-test MP4 duration is shorter than expected.")
+          if not any(s.get("codec_type")=="video" for s in p.get("streams",[])):
+              raise SystemExit("Smoke-test MP4 has no video stream.")
+          if not any(s.get("codec_type")=="audio" and s.get("codec_name")=="aac" for s in p.get("streams",[])):
+              raise SystemExit("Smoke-test MP4 has no AAC audio stream.")
+          print("Dubbing smoke test passed: ",json.dumps({"duration":p["format"]["duration"],"size":p["format"]["size"]}))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Arabic-Dubbing-Smoke-Test
+          path: |
+            output/smoke/
+            work/smoke/source_probe.json
+          if-no-files-found: warn
+          retention-days: 5
