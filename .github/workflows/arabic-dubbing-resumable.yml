@@ -312,7 +312,11 @@ jobs:
           if not any(s.get("codec_type")=="audio" and s.get("codec_name")=="aac" for s in streams): raise SystemExit("No AAC audio stream")
           final_path=f"output/Arabic_Dub_{os.environ['TASK_ID']}.mp4"
           subprocess.run(["ffmpeg","-v","error","-i",final_path,"-f","null","-"],check=True,timeout=900)
-          digest=hashlib.sha256(open(final_path,"rb").read()).hexdigest()
+          hasher=hashlib.sha256()
+          with open(final_path,"rb") as media:
+            for block in iter(lambda: media.read(1024*1024), b""):
+              hasher.update(block)
+          digest=hasher.hexdigest()
           manifest={
             "status":"verified_mp4",
             "task_id":os.environ["TASK_ID"],
