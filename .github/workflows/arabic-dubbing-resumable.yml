@@ -1,22 +1,41 @@
-name: Arabic Dubbing (resumable chunks, CPU-only)
+name: Arabic Dubbing (resumable, rights-cleared source, verified Drive upload)
 
 on:
   workflow_dispatch:
     inputs:
-      video_url:
-        description: "Authorized source video URL"
+      source_url:
+        description: "HTTPS direct-download URL to media you own or are authorized to dub. YouTube watch/player URLs are intentionally rejected."
         required: true
-        default: "https://youtu.be/3G3nD6SYxfo"
+        type: string
+      rights_confirmed:
+        description: "Confirm you own the source or have permission to make/store a full dubbed derivative."
+        required: true
+        type: choice
+        options: ["no", "yes"]
+        default: "no"
       chunk_seconds:
-        description: "Chunk size in seconds (keep 300 for resumability)"
+        description: "Chunk size in seconds"
         required: true
+        type: choice
+        options: ["180", "240", "300", "360", "480", "600"]
         default: "300"
+      asr_model:
+        description: "faster-whisper model"
+        required: true
+        type: choice
+        options: ["tiny", "base", "small"]
+        default: "small"
+      arabic_voice:
+        description: "One Arabic TTS voice for this draft; multi-speaker diarization is not implemented."
+        required: true
+        type: string
+        default: "ar-SA-HamedNeural"
 
 permissions:
   contents: read
 
 concurrency:
-  group: arabic-dubbing-resumable-${{ github.ref }}
+  group: arabic-dubbing-resumable-${ github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -24,7 +43,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     outputs:
-      chunk_ids: ${{ steps.chunks.outputs.chunk_ids }}
+      chunk_ids: ${ steps.prepare.outputs.chunk_ids }}
+      source_sha256: ${ steps.prepare.outputs.source_sha256 }}
+      normalized_sha256: ${ steps.prepare.outputs.normalized_sha256 }}
+      source_duration: ${ steps.prepare.outputs.source_duration }}
+      task_id: ${ steps.prepare.outputs.task_id }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -33,52 +56,105 @@ jobs:
       - name: Install media tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y ffmpeg
+          sudo apt-get install -y ffmpeg curl
           python -m pip install --upgrade pip
-          pip install yt-dlp
-      - name: Download source and split audio into checkpointable chunks
+      - name: Validate rights confirmation and source URL
         env:
-          VIDEO_URL: ${{ inputs.video_url }}
-          CHUNK_SECONDS: ${{ inputs.chunk_seconds }}
-          YOUTUBE_COOKIES: ${{ secrets.YOUTUBE_COOKIES }}
+          SOURCE_URL: ${ inputs.source_url }}
+          RIGHTS_CONFIRMED: ${ inputs.rights_confirmed }}
         run: |
           set -euo pipefail
-          if [ "$CHUNK_SECONDS" -lt 120 ] || [ "$CHUNK_SECONDS" -gt 600 ]; then
-            echo "chunk_seconds must be between 120 and 600"; exit 2
-          fi
+          python - <<'PY'
+          import os
+          from urllib.parse import urlparse
+          if os.environ.get("RIGHTS_CONFIRMED") != "yes":
+              raise SystemExit("Refusing to process: rights_confirmed must be yes only if you own the source or have permission for a complete dubbed derivative.")
+          url = os.environ.get("SOURCE_URL", "").strip()
+          parsed = urlparse(url)
+          if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
+              raise SystemExit("source_url must be a direct HTTPS media URL without embedded credentials.")
+          host = parsed.hostname.lower().rstrip(".")
+          blocked = {"youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.com", "youtu.be", "youtube-nocookie.com", "www.youtube-nocookie.com"}
+          if host in blocked or host.endswith(".youtube.com") or host.endswith(".youtube-nocookie.com"):
+              raise SystemExit("This workflow does not download YouTube watch/player pages or use cookies/player-client workarounds. Supply a rights-cleared direct media-file URL from the rights holder or an authorized storage location.")
+          print("Source policy accepted. URL is not printed to logs.")
+          PY
+      - name: Download, inspect, hash, and split source
+        id: prepare
+        env:
+          SOURCE_URL: ${ inputs.source_url }}
+          CHUNK_SECONDS: ${ inputs.chunk_seconds }}
+          ASR_MODEL: ${ inputs.asr_model }}
+          ARABIC_VOICE: ${ inputs.arabic_voice }}
+        run: |
+          set -euo pipefail
           mkdir -p work/chunks work/source
-          if [ -n "${YOUTUBE_COOKIES:-}" ]; then
-            printf "%s" "$YOUTUBE_COOKIES" > work/youtube-cookies.txt
-            chmod 600 work/youtube-cookies.txt
-            yt-dlp --cookies work/youtube-cookies.txt --no-playlist --no-warnings --format "best[height<=720][ext=mp4]/best[height<=720]/best" --merge-output-format mp4 -o "work/source/source.%(ext)s" "$VIDEO_URL"
-            rm -f work/youtube-cookies.txt
-          else
-            echo "No YOUTUBE_COOKIES secret found; trying the embedded TV player without credentials."
-            yt-dlp --extractor-args "youtube:player_client=tv_embedded" --no-playlist --no-warnings --format "best[height<=720][ext=mp4]/best[height<=720]/best" --merge-output-format mp4 -o "work/source/source.%(ext)s" "$VIDEO_URL" || { echo "::error::YouTube blocked this runner. Add repository Actions secret YOUTUBE_COOKIES with an exported cookies.txt file; do not paste cookies into chat or commit them."; exit 2; }
+          curl --fail --location --proto '=https' --proto-redir '=https' \
+            --connect-timeout 20 --max-time 900 --max-redirs 5 \
+            --retry 3 --retry-delay 3 --max-filesize 8589934592 \
+            --silent --show-error --output work/source/downloaded_source.bin "$SOURCE_URL"
+          test -s work/source/downloaded_source.bin
+          SIZE="$(stat -c%s work/source/downloaded_source.bin)"
+          if [ "$SIZE" -gt 8589934592 ]; then
+            echo "::error::Source exceeds the configured 8 GiB runner limit."
+            exit 2
           fi
-          SRC="$(find work/source -maxdepth 1 -type f ! -name '*.part' | head -n1)"
-          test -n "$SRC"
-          ffmpeg -y -i "$SRC" -map 0:v:0 -map 0:a:0? -c copy -movflags +faststart work/source/source.mp4
-          ffprobe -v error -show_entries format=duration,size -of json work/source/source.mp4 | tee work/source/source_probe.json
-          ffmpeg -y -i work/source/source.mp4 -vn -ac 1 -ar 16000 -f segment -segment_time "$CHUNK_SECONDS" -reset_timestamps 1 work/chunks/chunk_%03d.flac
+          SOURCE_SHA256="$(sha256sum work/source/downloaded_source.bin | cut -d' ' -f1)"
+          ffprobe -v error -show_entries format=duration,size,format_name:stream=codec_type,codec_name,width,height,r_frame_rate,sample_rate,channels -of json work/source/downloaded_source.bin > work/source/source_input_probe.json
+          python - <<'PY'
+          import json
+          p=json.load(open("work/source/source_input_probe.json",encoding="utf-8"))
+          streams=p.get("streams",[])
+          if not any(x.get("codec_type")=="video" for x in streams):
+              raise SystemExit("Input has no video stream.")
+          if not any(x.get("codec_type")=="audio" for x in streams):
+              raise SystemExit("Input has no audio stream; speech recognition cannot run.")
+          d=float(p.get("format",{}).get("duration") or 0)
+          if d < 1:
+              raise SystemExit(f"Input duration is invalid: {d}")
+          print(f"Input probe passed: duration={d:.3f}s; stream_count={len(streams)}.")
+          PY
+          ffmpeg -y -v error -i work/source/downloaded_source.bin \
+            -map 0:v:0 -map 0:a:0 -c:v copy -c:a aac -b:a 192k \
+            -movflags +faststart work/source/source.mp4
+          rm -f work/source/downloaded_source.bin
+          ffprobe -v error -show_entries format=duration,size,format_name:stream=codec_type,codec_name,width,height,r_frame_rate,sample_rate,channels -of json work/source/source.mp4 | tee work/source/source_probe.json
+          NORMALIZED_SHA256="$(sha256sum work/source/source.mp4 | cut -d' ' -f1)"
+          SOURCE_DURATION="$(ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 work/source/source.mp4)"
+          ffmpeg -y -v error -i work/source/source.mp4 -vn -ac 1 -ar 16000 \
+            -f segment -segment_time "$CHUNK_SECONDS" -reset_timestamps 1 \
+            -c:a flac work/chunks/chunk_%03d.flac
           python - <<'PY' >> "$GITHUB_OUTPUT"
-          import glob,json,os
-          ids=[os.path.basename(p).replace("chunk_","").replace(".flac","") for p in sorted(glob.glob("work/chunks/chunk_*.flac"))]
-          if not ids: raise SystemExit("No audio chunks were generated")
+          import glob,json
+          from pathlib import Path
+          ids=[Path(p).name.replace("chunk_","").replace(".flac","") for p in sorted(glob.glob("work/chunks/chunk_*.flac"))]
+          if not ids:
+              raise SystemExit("No audio chunks were generated")
           print("chunk_ids="+json.dumps(ids))
           PY
+          export SOURCE_SHA256 NORMALIZED_SHA256 SOURCE_DURATION CHUNK_SECONDS ASR_MODEL ARABIC_VOICE
+          TASK_ID="$(python - <<'PY'
+          import hashlib,os
+          value="|".join([os.environ["SOURCE_SHA256"],os.environ["NORMALIZED_SHA256"],os.environ["CHUNK_SECONDS"],os.environ["ASR_MODEL"],os.environ["ARABIC_VOICE"],"arabic-dubbing-v2"])
+          print(hashlib.sha256(value.encode()).hexdigest()[:24])
+          PY
+          )"
+          echo "source_sha256=$SOURCE_SHA256" >> "$GITHUB_OUTPUT"
+          echo "normalized_sha256=$NORMALIZED_SHA256" >> "$GITHUB_OUTPUT"
+          echo "source_duration=$SOURCE_DURATION" >> "$GITHUB_OUTPUT"
+          echo "task_id=$TASK_ID" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v4
         with:
-          name: arabic-dub-source-video
+          name: arabic-dub-source-${ steps.prepare.outputs.task_id }}
           path: work/source/
           if-no-files-found: error
-          retention-days: 3
+          retention-days: 7
       - uses: actions/upload-artifact@v4
         with:
-          name: arabic-dub-audio-chunks
+          name: arabic-dub-audio-chunks-${ steps.prepare.outputs.task_id }}
           path: work/chunks/
           if-no-files-found: error
-          retention-days: 3
+          retention-days: 7
 
   dub-chunks:
     needs: prepare
@@ -86,64 +162,77 @@ jobs:
     timeout-minutes: 45
     strategy:
       fail-fast: false
-      max-parallel: 4
+      max-parallel: 2
       matrix:
-        chunk: ${{ fromJSON(needs.prepare.outputs.chunk_ids) }}
+        chunk: ${ fromJSON(needs.prepare.outputs.chunk_ids) }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: pip
-      - name: Install FFmpeg and dubbing dependencies
+      - name: Install media and dubbing dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg
           python -m pip install --upgrade pip
           pip install faster-whisper deep-translator edge-tts
-      - name: Restore this chunk checkpoint
+      - name: Restore source/config-specific chunk checkpoint
         id: cache
         uses: actions/cache/restore@v4
         with:
-          path: cache/chunk_${{ matrix.chunk }}/
-          key: arabic-dub-v1-${{ matrix.chunk }}-${{ hashFiles('scripts/dub_arabic_cpu.py') }}
+          path: cache/chunk_${ matrix.chunk }}/
+          key: arabic-dub-v2-${ needs.prepare.outputs.task_id }}-${ matrix.chunk }}-${ hashFiles('scripts/dub_arabic_cpu.py') }}
       - uses: actions/download-artifact@v4
         with:
-          name: arabic-dub-audio-chunks
+          name: arabic-dub-audio-chunks-${ needs.prepare.outputs.task_id }}
           path: work/chunks
-      - name: Process chunk only if checkpoint is absent
+      - name: Resume current chunk only
         env:
-          CHUNK: ${{ matrix.chunk }}
+          CHUNK: ${ matrix.chunk }}
+          ASR_MODEL: ${ inputs.asr_model }}
+          ARABIC_VOICE: ${ inputs.arabic_voice }}
         run: |
           set -euo pipefail
-          mkdir -p "cache/chunk_${CHUNK}" "output/chunk_${CHUNK}"
-          if [ -s "cache/chunk_${CHUNK}/dub_ar.wav" ] && [ -s "cache/chunk_${CHUNK}/draft_manifest.json" ]; then
-            echo "Using completed cached chunk ${CHUNK}"
-            cp "cache/chunk_${CHUNK}/"* "output/chunk_${CHUNK}/"
-            exit 0
+          mkdir -p "cache/chunk_$CHUNK" "output/chunk_$CHUNK"
+          if [ -s "cache/chunk_$CHUNK/dub_ar.wav" ] && [ -s "cache/chunk_$CHUNK/draft_manifest.json" ]; then
+            echo "Reusing completed source/config-specific chunk $CHUNK"
+          else
+            python scripts/dub_arabic_cpu.py \
+              --audio "work/chunks/chunk_$CHUNK.flac" \
+              --out "cache/chunk_$CHUNK" \
+              --model "$ASR_MODEL" --voice "$ARABIC_VOICE"
+            DURATION="$(ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "work/chunks/chunk_$CHUNK.flac")"
+            ffmpeg -y -v error -i "cache/chunk_$CHUNK/dub_ar.wav" \
+              -af apad -t "$DURATION" -ac 2 -ar 48000 -c:a pcm_s16le \
+              "cache/chunk_$CHUNK/dub_ar_normalized.wav"
+            mv "cache/chunk_$CHUNK/dub_ar_normalized.wav" "cache/chunk_$CHUNK/dub_ar.wav"
           fi
-          python scripts/dub_arabic_cpu.py --audio "work/chunks/chunk_${CHUNK}.flac" --out "output/chunk_${CHUNK}" --model small --voice ar-SA-HamedNeural
-          DURATION="$(ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "work/chunks/chunk_${CHUNK}.flac")"
-          ffmpeg -y -i "output/chunk_${CHUNK}/dub_ar.wav" -af apad -t "$DURATION" -ac 2 -ar 48000 "cache/chunk_${CHUNK}/dub_ar.wav"
-          cp "output/chunk_${CHUNK}/draft_manifest.json" "cache/chunk_${CHUNK}/draft_manifest.json"
-          cp "output/chunk_${CHUNK}/transcript_source.json" "cache/chunk_${CHUNK}/transcript_source.json"
-          cp "output/chunk_${CHUNK}/transcript_ar.json" "cache/chunk_${CHUNK}/transcript_ar.json"
-      - name: Save completed chunk checkpoint
-        if: success() && steps.cache.outputs.cache-hit != 'true'
+          ffprobe -v error -show_entries format=duration,size -of json "cache/chunk_$CHUNK/dub_ar.wav" > "cache/chunk_$CHUNK/dub_probe.json"
+          python - <<'PY'
+          import json,os
+          c=os.environ["CHUNK"]
+          probe=json.load(open(f"cache/chunk_{c}/dub_probe.json",encoding="utf-8"))
+          if int(probe["format"].get("size",0)) < 1000: raise SystemExit(f"Dubbed chunk {c} is too small")
+          if float(probe["format"].get("duration",0)) <= 0: raise SystemExit(f"Dubbed chunk {c} has invalid duration")
+          if not os.path.isfile(f"cache/chunk_{c}/draft_manifest.json"): raise SystemExit(f"Manifest missing for chunk {c}")
+          print(f"Chunk {c} verified: {probe['format']['duration']}s")
+          PY
+          cp -a "cache/chunk_$CHUNK/." "output/chunk_$CHUNK/."
+      - name: Save partial or completed checkpoint for retry
+        if: ${ always() && steps.cache.outputs.cache-hit != 'true' }}
+        continue-on-error: true
         uses: actions/cache/save@v4
         with:
-          path: cache/chunk_${{ matrix.chunk }}/
-          key: arabic-dub-v1-${{ matrix.chunk }}-${{ hashFiles('scripts/dub_arabic_cpu.py') }}
-      - name: Upload completed chunk
+          path: cache/chunk_${ matrix.chunk }}/
+          key: arabic-dub-v2-${ needs.prepare.outputs.task_id }}-${ matrix.chunk }}-${ hashFiles('scripts/dub_arabic_cpu.py') }}
+      - uses: actions/upload-artifact@v4
         if: success()
-        uses: actions/upload-artifact@v4
         with:
-          name: arabic-dub-chunk-${{ matrix.chunk }}
-          path: |
-            output/chunk_${{ matrix.chunk }}/
-            cache/chunk_${{ matrix.chunk }}/
+          name: arabic-dub-chunk-${ needs.prepare.outputs.task_id }}-${ matrix.chunk }}
+          path: output/chunk_${ matrix.chunk }}/
           if-no-files-found: error
-          retention-days: 3
+          retention-days: 7
 
   render:
     needs: [prepare, dub-chunks]
@@ -158,52 +247,139 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg
+          python -m pip install --upgrade pip
       - uses: actions/download-artifact@v4
         with:
-          name: arabic-dub-source-video
+          name: arabic-dub-source-${ needs.prepare.outputs.task_id }}
           path: work/source
       - uses: actions/download-artifact@v4
         with:
-          pattern: arabic-dub-chunk-*
+          pattern: arabic-dub-chunk-${ needs.prepare.outputs.task_id }}-*
           path: chunk-artifacts
           merge-multiple: false
-      - name: Concatenate, mux, and validate final MP4
+      - name: Concatenate, mux, and verify final MP4
+        id: verify
         env:
-          CHUNK_IDS: ${{ needs.prepare.outputs.chunk_ids }}
+          CHUNK_IDS: ${ needs.prepare.outputs.chunk_ids }}
+          SOURCE_DURATION: ${ needs.prepare.outputs.source_duration }}
+          SOURCE_SHA256: ${ needs.prepare.outputs.source_sha256 }}
+          NORMALIZED_SHA256: ${ needs.prepare.outputs.normalized_sha256 }}
+          TASK_ID: ${ needs.prepare.outputs.task_id }}
+          CHUNK_SECONDS: ${ inputs.chunk_seconds }}
+          ASR_MODEL: ${ inputs.asr_model }}
+          ARABIC_VOICE: ${ inputs.arabic_voice }}
         run: |
           set -euo pipefail
           mkdir -p output
           python - <<'PY'
           import json,os
+          from pathlib import Path
           ids=json.loads(os.environ["CHUNK_IDS"])
+          if not ids: raise SystemExit("No chunk IDs in render job")
           with open("output/concat.txt","w",encoding="utf-8") as f:
-              for chunk in ids:
-                  p=f"chunk-artifacts/arabic-dub-chunk-{chunk}/cache/chunk_{chunk}/dub_ar.wav"
-                  if not os.path.isfile(p):
-                      p=f"chunk-artifacts/arabic-dub-chunk-{chunk}/output/chunk_{chunk}/dub_ar.wav"
-                  if not os.path.isfile(p) or os.path.getsize(p)<1000:
-                      raise SystemExit(f"Missing/empty dubbed chunk: {chunk}")
-                  f.write("file " + json.dumps(os.path.abspath(p)) + "\n")
-          print("Chunks verified:",len(ids))
+              for c in ids:
+                  p=Path(f"chunk-artifacts/arabic-dub-chunk-{os.environ['TASK_ID']}-{c}/output/chunk_{c}/dub_ar.wav")
+                  if not p.is_file() or p.stat().st_size < 1000:
+                      raise SystemExit(f"Missing/empty dubbed chunk: {c}")
+                  probe=json.load(open(p.parent/"dub_probe.json",encoding="utf-8"))
+                  if float(probe["format"].get("duration",0)) <= 0:
+                      raise SystemExit(f"Invalid chunk duration: {c}")
+                  f.write("file "+json.dumps(str(p.resolve()))+"\n")
+          print("Verified dubbed chunk count:",len(ids))
           PY
-          ffmpeg -y -f concat -safe 0 -i output/concat.txt -c:a pcm_s16le output/dub_ar.wav
-          ffmpeg -y -i work/source/source.mp4 -i output/dub_ar.wav -map 0:v:0 -map 1:a:0 -c:v libx264 -preset ultrafast -crf 28 -c:a aac -b:a 128k -shortest -movflags +faststart output/Arabic_Dub_Draft.mp4
-          ffprobe -v error -show_entries format=duration,size -show_entries stream=codec_type,width,height,sample_rate -of json output/Arabic_Dub_Draft.mp4 | tee output/final_probe.json
+          ffmpeg -y -v error -f concat -safe 0 -i output/concat.txt \
+            -af "apad,atrim=0:$SOURCE_DURATION" -c:a pcm_s16le output/dub_ar.wav
+          ffmpeg -y -v error -i work/source/source.mp4 -i output/dub_ar.wav \
+            -map 0:v:0 -map 1:a:0 -c:v libx264 -preset ultrafast -crf 25 \
+            -c:a aac -b:a 160k -movflags +faststart "output/Arabic_Dub_$TASK_ID.mp4"
+          ffprobe -v error -show_entries format=duration,size,format_name \
+            -show_entries stream=codec_type,codec_name,width,height,sample_rate,channels \
+            -of json "output/Arabic_Dub_$TASK_ID.mp4" | tee output/final_probe.json
           python - <<'PY'
-          import json,os
-          p=json.load(open("output/final_probe.json"))
-          d=float(p["format"]["duration"]); size=int(p["format"]["size"])
+          import json,os,hashlib,subprocess
+          p=json.load(open("output/final_probe.json",encoding="utf-8"))
+          duration=float(p["format"].get("duration") or 0)
+          size=int(p["format"].get("size") or 0)
           streams=p.get("streams",[])
-          if d<7200: raise SystemExit(f"Final duration too short: {d}s")
-          if size<1000000: raise SystemExit(f"Final MP4 too small: {size} bytes")
+          source_duration=float(os.environ["SOURCE_DURATION"])
+          if size < 1_000_000: raise SystemExit(f"Final MP4 too small: {size} bytes")
+          if not (0 < duration): raise SystemExit(f"Final duration invalid: {duration}")
+          if abs(duration-source_duration) > 3.0:
+              raise SystemExit(f"Final duration differs from source by {abs(duration-source_duration):.3f}s")
           if not any(s.get("codec_type")=="video" for s in streams): raise SystemExit("No video stream")
-          if not any(s.get("codec_type")=="audio" for s in streams): raise SystemExit("No audio stream")
-          print(f"Validated MP4: {d:.1f}s, {size} bytes")
+          if not any(s.get("codec_type")=="audio" and s.get("codec_name")=="aac" for s in streams): raise SystemExit("No AAC audio stream")
+          final_path=f"output/Arabic_Dub_{os.environ['TASK_ID']}.mp4"
+          subprocess.run(["ffmpeg","-v","error","-i",final_path,"-f","null","-"],check=True,timeout=900)
+          digest=hashlib.sha256(open(final_path,"rb").read()).hexdigest()
+          manifest={
+            "status":"verified_mp4",
+            "task_id":os.environ["TASK_ID"],
+            "source_sha256":os.environ["SOURCE_SHA256"],
+            "normalized_source_sha256":os.environ["NORMALIZED_SHA256"],
+            "final_sha256":digest,
+            "source_duration_seconds":source_duration,
+            "final_duration_seconds":duration,
+            "duration_delta_seconds":duration-source_duration,
+            "final_size_bytes":size,
+            "chunk_ids":json.loads(os.environ["CHUNK_IDS"]),
+            "chunk_count":len(json.loads(os.environ["CHUNK_IDS"])),
+            "chunk_seconds":int(os.environ["CHUNK_SECONDS"]),
+            "asr_model":os.environ["ASR_MODEL"],
+            "tts_voice":os.environ["ARABIC_VOICE"],
+            "limitations":["single TTS voice per chunk; no speaker diarization","no controllable emotion transfer","no source music/effects separation","no visual lip-sync","segment-level alignment, not word-level lip-sync"]
+          }
+          with open("output/run_manifest.json","w",encoding="utf-8") as f: json.dump(manifest,f,ensure_ascii=False,indent=2)
+          with open("output/SHA256SUMS.txt","w",encoding="utf-8") as f: f.write(f"{digest}  {os.path.basename(final_path)}\n")
+          with open(os.environ["GITHUB_OUTPUT"],"a",encoding="utf-8") as f: f.write(f"final_sha256={digest}\n")
+          print(json.dumps({"status":"VERIFIED","duration_seconds":duration,"source_duration_seconds":source_duration,"size_bytes":size,"sha256":digest,"chunks":manifest["chunk_count"]},ensure_ascii=False))
+          with open(os.environ["GITHUB_STEP_SUMMARY"],"a",encoding="utf-8") as f:
+            f.write("## Final MP4 verification\n\n")
+            f.write(f"- Task: {os.environ['TASK_ID']}\n")
+            f.write(f"- Duration: {duration:.3f}s (source {source_duration:.3f}s)\n")
+            f.write(f"- Size: {size} bytes\n")
+            f.write(f"- SHA-256: {digest}\n")
+            f.write(f"- Chunk count: {manifest['chunk_count']}\n")
+            f.write("- Validation: FFprobe streams and full FFmpeg decode passed.\n")
           PY
-          sha256sum output/Arabic_Dub_Draft.mp4 | tee output/SHA256SUMS.txt
-      - uses: actions/upload-artifact@v4
+      - name: Upload verified MP4 and report to workflow artifact
+        uses: actions/upload-artifact@v4
         with:
-          name: Arabic-Dub-Final-MP4
-          path: output/
+          name: Arabic-Dub-Final-${ needs.prepare.outputs.task_id }}
+          path: |
+            output/Arabic_Dub_${ needs.prepare.outputs.task_id }}.mp4
+            output/final_probe.json
+            output/run_manifest.json
+            output/SHA256SUMS.txt
+            output/dub_ar.wav
+            output/concat.txt
           if-no-files-found: error
-          retention-days: 3
+          retention-days: 7
+      - name: Upload verified final MP4 to Google Drive
+        id: drive
+        env:
+          GOOGLE_DRIVE_CREDENTIALS: ${ secrets.GOOGLE_DRIVE_CREDENTIALS }}
+          GOOGLE_DRIVE_FOLDER_ID: ${ secrets.GOOGLE_DRIVE_FOLDER_ID }}
+          EXPECTED_OUTPUT_SHA256: ${ steps.verify.outputs.final_sha256 }}
+          TASK_ID: ${ needs.prepare.outputs.task_id }}
+          SOURCE_SHA256: ${ needs.prepare.outputs.source_sha256 }}
+        run: |
+          set -euo pipefail
+          if [ -z "$GOOGLE_DRIVE_CREDENTIALS" ] || [ -z "$GOOGLE_DRIVE_FOLDER_ID" ]; then
+            echo "::error::MP4 is verified and saved as an Actions artifact, but Drive upload is not configured. Add GOOGLE_DRIVE_CREDENTIALS and GOOGLE_DRIVE_FOLDER_ID to repository Actions secrets, then retry upload without re-dubbing."
+            exit 2
+          fi
+          python -m pip install google-api-python-client google-auth google-auth-httplib2
+          FILE="output/Arabic_Dub_$TASK_ID.mp4"
+          python scripts/upload_google_drive.py \
+            --file "$FILE" --task-id "$TASK_ID" --source-sha256 "$SOURCE_SHA256" \
+            --filename "Arabic-Dub-$TASK_ID.mp4"
+      - name: Preserve diagnostics if a later step fails
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Arabic-Dub-Diagnostics-${ needs.prepare.outputs.task_id }}
+          path: |
+            output/
+            work/source/source_probe.json
+          if-no-files-found: warn
+          retention-days: 7
