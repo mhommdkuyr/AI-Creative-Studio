@@ -304,7 +304,8 @@ jobs:
                   probe=json.load(open(p.parent/"dub_probe.json",encoding="utf-8"))
                   if float(probe["format"].get("duration",0)) <= 0:
                       raise SystemExit(f"Invalid chunk duration: {c}")
-                  f.write("file "+json.dumps(str(p.resolve()))+"\n")
+                  escaped_path = str(p.resolve()).replace("\\", "\\\\").replace("'", "\\'")
+                  f.write("file '" + escaped_path + "'\n")
           print("Verified dubbed chunk count:",len(ids))
           PY
           ffmpeg -y -v error -f concat -safe 0 -i output/concat.txt \
