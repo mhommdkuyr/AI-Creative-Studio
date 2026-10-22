@@ -1,0 +1,272 @@
+name: Arabic Dubbing from Google Drive (multi-speaker, expressive, resumable)
+on:
+  workflow_dispatch:
+    inputs:
+      source_url:
+        description: "Google Drive link to the rights-cleared source video"
+        required: true
+        type: string
+        default: "https://drive.google.com/file/d/1sMis6qi_j3AsBvAEL2mliPRIKf0s3-uI/view?usp=drivesdk"
+      rights_confirmed:
+        description: "Confirm rights to make and store a full dubbed derivative"
+        required: true
+        type: choice
+        options: ["no", "yes"]
+        default: "yes"
+      asr_model:
+        description: "faster-whisper CPU model"
+        required: true
+        type: choice
+        options: ["tiny", "base", "small"]
+        default: "small"
+      translation_backend:
+        description: "Translation backend"
+        required: true
+        type: choice
+        options: ["argos", "google"]
+        default: "argos"
+permissions:
+  contents: read
+concurrency:
+  group: arabic-dubbing-drive-multispeaker-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  dub:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - name: Checkout pipeline
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install system dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg git build-essential cmake libsndfile1
+      - name: Install dubbing dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          pip install "numpy<2" soundfile "scikit-learn>=1.4" "speechbrain>=1.0.3" faster-whisper argostranslate deep-translator gdown huggingface_hub llama-cpp-python neucodec librosa
+      - name: Restore checkpoints and model cache
+        id: cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            work/dub/transcript_source.json
+            work/dub/speaker_profiles.json
+            work/dub/transcript_source_with_speakers.json
+            work/dub/translated_segments.json
+            work/dub/transcript_ar.json
+            work/dub/run_manifest.json
+            work/dub/segments/
+            work/dub/voice_refs/
+            work/dub/models/
+            ~/.cache/huggingface/hub/
+            ~/.cache/torch/
+          key: arabic-dub-drive-${{ hashFiles('scripts/dub_arabic_multispeaker.py') }}-${{ github.run_id }}
+          restore-keys: |
+            arabic-dub-drive-${{ hashFiles('scripts/dub_arabic_multispeaker.py') }}-
+      - name: Validate rights and source URL
+        env:
+          SOURCE_URL: ${{ inputs.source_url }}
+          RIGHTS_CONFIRMED: ${{ inputs.rights_confirmed }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import os
+          from urllib.parse import urlparse
+          if os.environ.get("RIGHTS_CONFIRMED") != "yes":
+              raise SystemExit("Refusing to process: rights confirmation must be yes.")
+          p=urlparse(os.environ.get("SOURCE_URL","").strip())
+          if p.scheme!="https" or not p.hostname or p.username or p.password:
+              raise SystemExit("source_url must be a valid HTTPS URL without credentials.")
+          host=p.hostname.lower().rstrip(".")
+          if host in {"youtube.com","www.youtube.com","youtu.be","m.youtube.com"} or host.endswith(".youtube.com"):
+              raise SystemExit("Use the authorized Drive source, not a YouTube watch URL.")
+          if not (host=="drive.google.com" or host.endswith(".googleusercontent.com") or host.endswith(".google.com")):
+              raise SystemExit("source_url must be a Google Drive link for this workflow.")
+          print("Rights confirmation and Drive URL validated; URL omitted from logs.")
+          PY
+      - name: Download Drive video
+        env:
+          SOURCE_URL: ${{ inputs.source_url }}
+        run: |
+          set -euo pipefail
+          mkdir -p work/source output
+          gdown --fuzzy "$SOURCE_URL" --output work/source/source_download.mkv --continue
+          test -s work/source/source_download.mkv
+          echo "Source retrieved; bytes=$(stat -c%s work/source/source_download.mkv)"
+      - name: Probe, hash, normalize, and extract audio
+        id: prepare
+        run: |
+          set -euo pipefail
+          ffprobe -v error -show_entries format=duration,size,format_name:stream=codec_type,codec_name,width,height,r_frame_rate,sample_rate,channels -of json work/source/source_download.mkv | tee output/source_probe.json
+          python - <<'PY'
+          import json
+          p=json.load(open("output/source_probe.json",encoding="utf-8"))
+          ss=p.get("streams",[])
+          if not any(s.get("codec_type")=="video" for s in ss): raise SystemExit("No video stream")
+          if not any(s.get("codec_type")=="audio" for s in ss): raise SystemExit("No audio stream")
+          d=float((p.get("format") or {}).get("duration") or 0)
+          z=int((p.get("format") or {}).get("size") or 0)
+          if d<1 or z<1_000_000: raise SystemExit(f"Invalid input size/duration: {z} bytes / {d}s")
+          print(f"Source verified: {d:.3f}s, {z} bytes")
+          PY
+          SOURCE_SHA256="$(sha256sum work/source/source_download.mkv | cut -d' ' -f1)"
+          SOURCE_DURATION="$(ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 work/source/source_download.mkv)"
+          TASK_ID="$(printf '%s' "$SOURCE_SHA256" | cut -c1-16)"
+          if ! ffmpeg -y -v error -i work/source/source_download.mkv -map 0:v:0 -map 0:a:0 -c:v copy -c:a aac -b:a 192k -movflags +faststart work/source/source.mp4; then
+            rm -f work/source/source.mp4
+            ffmpeg -y -v error -i work/source/source_download.mkv -map 0:v:0 -map 0:a:0 -c:v libx264 -preset veryfast -crf 24 -c:a aac -b:a 192k -movflags +faststart work/source/source.mp4
+          fi
+          ffmpeg -y -v error -i work/source/source_download.mkv -map 0:a:0 -vn -ac 1 -ar 16000 -c:a pcm_s16le work/source/source_audio.wav
+          test -s work/source/source.mp4
+          test -s work/source/source_audio.wav
+          echo "source_sha256=$SOURCE_SHA256" >> "$GITHUB_OUTPUT"
+          echo "source_duration=$SOURCE_DURATION" >> "$GITHUB_OUTPUT"
+          echo "task_id=$TASK_ID" >> "$GITHUB_OUTPUT"
+          echo "$SOURCE_SHA256" > output/source_sha256.txt
+          rm -f work/source/source_download.mkv
+      - name: Get Audar-TTS code
+        run: |
+          set -euo pipefail
+          mkdir -p third_party
+          if [ ! -f third_party/Audar-TTS-V1/audar_tts/__init__.py ]; then
+            rm -rf third_party/Audar-TTS-V1
+            git clone --depth 1 https://github.com/AudarAI/Audar-TTS-V1.git third_party/Audar-TTS-V1
+          fi
+      - name: Syntax check
+        run: |
+          python -m py_compile scripts/dub_arabic_multispeaker.py scripts/dub_arabic_cpu.py scripts/upload_google_drive.py
+          test -f third_party/Audar-TTS-V1/audar_tts/__init__.py
+      - name: Transcribe, diarize, translate, and synthesize expressive Arabic
+        id: dubbing
+        env:
+          SOURCE_SHA256: ${{ steps.prepare.outputs.source_sha256 }}
+          ASR_MODEL: ${{ inputs.asr_model }}
+          TRANSLATION_BACKEND: ${{ inputs.translation_backend }}
+        run: |
+          set -euo pipefail
+          python scripts/dub_arabic_multispeaker.py --audio work/source/source_audio.wav --out-dir work/dub --asr-model "$ASR_MODEL" --translation-backend "$TRANSLATION_BACKEND" --source-sha256 "$SOURCE_SHA256"
+          test -s work/dub/dub_ar.wav
+          test -s work/dub/speaker_profiles.json
+          test -s work/dub/transcript_ar.json
+          test -s work/dub/run_manifest.json
+      - name: Render and verify final MP4
+        id: render
+        env:
+          SOURCE_SHA256: ${{ steps.prepare.outputs.source_sha256 }}
+          SOURCE_DURATION: ${{ steps.prepare.outputs.source_duration }}
+          TASK_ID: ${{ steps.prepare.outputs.task_id }}
+        run: |
+          set -euo pipefail
+          FINAL="output/Arabic_Dub_${TASK_ID}.mp4"
+          ffmpeg -y -v error -i work/source/source.mp4 -i work/dub/dub_ar.wav \
+            -filter_complex "[0:a]volume=0.06[amb];[1:a]volume=1.0[ar];[amb][ar]amix=inputs=2:duration=longest:normalize=0,alimiter=limit=0.95[aout]" \
+            -map 0:v:0 -map "[aout]" -c:v copy -c:a aac -b:a 192k -t "$SOURCE_DURATION" -movflags +faststart "$FINAL"
+          ffprobe -v error -show_entries format=duration,size,format_name -show_entries stream=codec_type,codec_name,width,height,sample_rate,channels -of json "$FINAL" | tee output/final_probe.json
+          python - <<'PY'
+          import hashlib,json,os,subprocess
+          from pathlib import Path
+          final=Path("output/Arabic_Dub_"+os.environ["TASK_ID"]+".mp4")
+          probe=json.load(open("output/final_probe.json",encoding="utf-8"))
+          info=probe.get("format",{})
+          streams=probe.get("streams",[])
+          size=int(info.get("size") or 0)
+          duration=float(info.get("duration") or 0)
+          source_duration=float(os.environ["SOURCE_DURATION"])
+          if not final.is_file() or size<1_000_000: raise SystemExit(f"Final MP4 missing or too small: {size} bytes")
+          if abs(duration-source_duration)>3.0: raise SystemExit(f"Duration mismatch: source={source_duration:.3f}s output={duration:.3f}s")
+          if not any(s.get("codec_type")=="video" for s in streams): raise SystemExit("No video stream in final MP4")
+          if not any(s.get("codec_type")=="audio" and s.get("codec_name")=="aac" for s in streams): raise SystemExit("No AAC audio stream")
+          subprocess.run(["ffmpeg","-v","error","-i",str(final),"-f","null","-"],check=True,timeout=1800)
+          h=hashlib.sha256()
+          with final.open("rb") as f:
+              for block in iter(lambda:f.read(1024*1024),b""): h.update(block)
+          final_hash=h.hexdigest()
+          open("output/SHA256SUMS.txt","w",encoding="utf-8").write(f"{final_hash}  {final.name}\n")
+          open(os.environ["GITHUB_OUTPUT"],"a",encoding="utf-8").write(f"final_sha256={final_hash}\n")
+          pipeline=json.load(open("work/dub/run_manifest.json",encoding="utf-8"))
+          report={**pipeline,"status":"VERIFIED_MP4","task_id":os.environ["TASK_ID"],"source_sha256":os.environ["SOURCE_SHA256"],"final_file":str(final),"final_duration_seconds":duration,"final_size_bytes":size,"final_sha256":final_hash,"video_stream_present":True,"aac_audio_stream_present":True,"full_ffmpeg_decode":"passed","drive_upload_status":"pending"}
+          json.dump(report,open("output/run_manifest.json","w",encoding="utf-8"),ensure_ascii=False,indent=2)
+          with open(os.environ["GITHUB_STEP_SUMMARY"],"a",encoding="utf-8") as f:
+              f.write("## Arabic dubbing output verified\n\n")
+              f.write(f"- Task ID: {os.environ['TASK_ID']}\n")
+              f.write(f"- Source duration: {source_duration:.3f}s\n")
+              f.write(f"- Final duration: {duration:.3f}s\n")
+              f.write(f"- Final size: {size} bytes\n")
+              f.write(f"- SHA-256: {final_hash}\n")
+              f.write("- FFprobe and full FFmpeg decode: passed\n")
+          print(json.dumps({"status":"VERIFIED_MP4","duration":duration,"size_bytes":size,"sha256":final_hash},ensure_ascii=False))
+          PY
+      - name: Save resumable checkpoints
+        if: always() && steps.cache.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            work/dub/transcript_source.json
+            work/dub/speaker_profiles.json
+            work/dub/transcript_source_with_speakers.json
+            work/dub/translated_segments.json
+            work/dub/transcript_ar.json
+            work/dub/run_manifest.json
+            work/dub/segments/
+            work/dub/voice_refs/
+            work/dub/models/
+            ~/.cache/huggingface/hub/
+            ~/.cache/torch/
+          key: arabic-dub-drive-${{ hashFiles('scripts/dub_arabic_multispeaker.py') }}-${{ github.run_id }}
+      - name: Upload final MP4 and diagnostics as artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Arabic-Dub-Drive-${{ steps.prepare.outputs.task_id || github.run_id }}
+          path: |
+            output/
+            work/dub/run_manifest.json
+            work/dub/speaker_profiles.json
+            work/dub/transcript_source.json
+            work/dub/transcript_source_with_speakers.json
+            work/dub/transcript_ar.json
+            work/dub/translated_segments.json
+          if-no-files-found: warn
+          retention-days: 7
+      - name: Upload verified final MP4 to Google Drive
+        id: drive
+        if: success()
+        continue-on-error: true
+        env:
+          GOOGLE_DRIVE_CREDENTIALS: ${{ secrets.GOOGLE_DRIVE_CREDENTIALS }}
+          GOOGLE_DRIVE_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_FOLDER_ID }}
+          EXPECTED_OUTPUT_SHA256: ${{ steps.render.outputs.final_sha256 }}
+          TASK_ID: ${{ steps.prepare.outputs.task_id }}
+          SOURCE_SHA256: ${{ steps.prepare.outputs.source_sha256 }}
+        run: |
+          set -euo pipefail
+          if [ -z "$GOOGLE_DRIVE_CREDENTIALS" ] || [ -z "$GOOGLE_DRIVE_FOLDER_ID" ]; then
+            echo "Drive upload not configured: add GOOGLE_DRIVE_CREDENTIALS and GOOGLE_DRIVE_FOLDER_ID to repository Actions secrets."
+            echo "The verified MP4 remains an Actions artifact, but final completion will be marked incomplete."
+            exit 2
+          fi
+          python -m pip install google-api-python-client google-auth google-auth-httplib2
+          python scripts/upload_google_drive.py --file "output/Arabic_Dub_$TASK_ID.mp4" --task-id "$TASK_ID" --source-sha256 "$SOURCE_SHA256" --filename "Arabic-Dub-$TASK_ID.mp4"
+      - name: Enforce complete-success definition
+        if: always()
+        env:
+          PREPARE_RESULT: ${{ steps.prepare.outcome }}
+          DUBBING_RESULT: ${{ steps.dubbing.outcome }}
+          RENDER_RESULT: ${{ steps.render.outcome }}
+          DRIVE_RESULT: ${{ steps.drive.outcome }}
+        run: |
+          set -euo pipefail
+          if [ "$PREPARE_RESULT" != "success" ]; then echo "::error::Source preparation did not succeed."; exit 1; fi
+          if [ "$DUBBING_RESULT" != "success" ]; then echo "::error::Multi-speaker Arabic dubbing did not succeed."; exit 1; fi
+          if [ "$RENDER_RESULT" != "success" ]; then echo "::error::Final MP4 verification did not succeed."; exit 1; fi
+          if [ "$DRIVE_RESULT" != "success" ]; then echo "::error::MP4 was not verified in Google Drive; check the artifact and configure Drive secrets."; exit 1; fi
+          echo "All mandatory stages succeeded, including verified Drive upload."
