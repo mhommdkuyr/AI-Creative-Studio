@@ -79,6 +79,76 @@ def media_duration(path: Path) -> float:
     return value
 
 
+def create_translator(backend: str, source_language: str):
+    """Create a dependable local Argos translator, or an explicitly requested remote Google translator.
+
+    Argos will use a direct language-to-Arabic package where available, otherwise it will
+    install source-to-English and English-to-Arabic packages so Argos can compose a pivot.
+    No failed translation is silently replaced with source-language text.
+    """
+    if backend == "google":
+        from deep_translator import GoogleTranslator
+        return GoogleTranslator(source="auto", target="ar"), "GoogleTranslator (remote)"
+
+    import argostranslate.package as argos_package
+    import argostranslate.translate as argos_translate
+
+    language = str(source_language or "").strip().lower()
+    aliases = {"iw": "he", "jp": "ja", "kr": "ko", "zh-cn": "zh", "zh-tw": "zt"}
+    language = aliases.get(language, language)
+    if not language:
+        raise RuntimeError("ASR did not identify the source language; cannot select an offline translation model.")
+    if language == "ar":
+        class SameLanguage:
+            def translate(self, text: str) -> str:
+                return text
+        return SameLanguage(), "source-already-Arabic"
+
+    try:
+        argos_package.update_package_index()
+        available = argos_package.get_available_packages()
+    except Exception as exc:
+        raise RuntimeError(f"Could not retrieve the Argos translation model index ({type(exc).__name__}).") from exc
+
+    def installed_pair(src: str, dst: str) -> bool:
+        try:
+            return any(p.from_code == src and p.to_code == dst for p in argos_package.get_installed_packages())
+        except Exception:
+            return False
+
+    def ensure_pair(src: str, dst: str) -> bool:
+        if installed_pair(src, dst):
+            return True
+        candidate = next((p for p in available if p.from_code == src and p.to_code == dst), None)
+        if candidate is None:
+            return False
+        try:
+            print(f"Installing offline Argos model {src}->{dst} (version {candidate.package_version})", flush=True)
+            candidate.install()
+            return installed_pair(src, dst)
+        except Exception as exc:
+            raise RuntimeError(f"Failed to install Argos model {src}->{dst} ({type(exc).__name__}).") from exc
+
+    direct = ensure_pair(language, "ar")
+    if not direct and language != "en":
+        first = ensure_pair(language, "en")
+        second = ensure_pair("en", "ar")
+        if not (first and second):
+            raise RuntimeError(
+                f"No installed direct or English-pivot Argos route from {language} to Arabic. "
+                "Choose an authorized source language supported by available open translation models."
+            )
+    elif not direct and language == "en":
+        raise RuntimeError("Argos English-to-Arabic model is unavailable and could not be installed.")
+
+    try:
+        translation = argos_translate.get_translation_from_codes(language, "ar")
+    except Exception as exc:
+        raise RuntimeError(f"Argos could not build a translation route from {language} to Arabic ({type(exc).__name__}).") from exc
+    print(f"Offline translation route ready: {language}->ar", flush=True)
+    return translation, f"Argos offline ({language}->ar)"
+
+
 def translate_with_retry(translator, text: str, retries: int) -> str:
     last_error: Exception | None = None
     for attempt in range(retries):
@@ -110,6 +180,8 @@ def main() -> None:
     p.add_argument("--out", required=True)
     p.add_argument("--model", default="small")
     p.add_argument("--voice", default="ar-SA-HamedNeural")
+    p.add_argument("--translation-backend", choices=["argos", "google"], default="argos",
+                   help="Use offline Argos by default; GoogleTranslator is remote and may rate-limit.")
     p.add_argument("--translation-retries", type=int, default=4)
     p.add_argument("--tts-retries", type=int, default=3)
     p.add_argument("--max-rate", type=float, default=1.35,
@@ -303,6 +375,7 @@ def main() -> None:
     manifest = {
         "schema": SCHEMA_VERSION, "status": "audio_draft_created",
         "audio_sha256": audio_sha, "audio_duration_seconds": audio_duration,
+        "translation_backend": translation_backend,
         "detected_source_language": detected_language, "segments": len(voiced),
         "model": a.model, "voice": a.voice, "target_language": "ar",
         "checkpoint_stats": checkpoint_stats,
