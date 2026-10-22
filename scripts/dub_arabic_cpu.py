@@ -246,8 +246,7 @@ def main() -> None:
         atomic_json(transcript_path, transcription)
         print(f"ASR complete: {len(segments)} segments; language={detected_language}", flush=True)
 
-    from deep_translator import GoogleTranslator
-    translator = GoogleTranslator(source="auto", target="ar")
+    translator, translation_backend = create_translator(a.translation_backend, detected_language)
     voiced: list[dict[str, Any]] = []
     transcript_ar: list[dict[str, Any]] = []
     checkpoint_stats = {"translation_reused": 0, "tts_reused": 0, "translation_created": 0, "tts_created": 0}
