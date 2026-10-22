@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import Any
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 def sha256_file(path: Path) -> str:
@@ -266,6 +266,8 @@ def main() -> None:
             and state.get("audio_sha256") == audio_sha
             and state.get("model") == a.model
             and state.get("voice") == a.voice
+            and state.get("translation_backend") == a.translation_backend
+            and float(state.get("max_rate", -1)) == float(a.max_rate)
             and state.get("source") == source_text
             and abs(float(state.get("start", -99)) - start) < 0.02
             and abs(float(state.get("end", -99)) - end) < 0.02
@@ -279,7 +281,8 @@ def main() -> None:
                 raise RuntimeError(f"Empty Arabic translation for segment {idx}")
             state = {
                 "schema": SCHEMA_VERSION, "audio_sha256": audio_sha,
-                "model": a.model, "voice": a.voice, "index": idx,
+                "model": a.model, "voice": a.voice,
+                "translation_backend": a.translation_backend, "max_rate": a.max_rate, "index": idx,
                 "start": start, "end": end, "source": source_text,
                 "arabic": translated, "translation_status": "complete",
                 "tts_status": "pending",
@@ -327,7 +330,8 @@ def main() -> None:
                 raise RuntimeError(f"TTS conversion produced an invalid WAV for segment {idx}")
             state = {
                 "schema": SCHEMA_VERSION, "audio_sha256": audio_sha,
-                "model": a.model, "voice": a.voice, "index": idx,
+                "model": a.model, "voice": a.voice,
+                "translation_backend": a.translation_backend, "max_rate": a.max_rate, "index": idx,
                 "start": start, "end": end, "source": source_text,
                 "arabic": translated, "translation_status": "complete",
                 "tts_status": "complete", "tts_sha256": sha256_file(line_wav),
