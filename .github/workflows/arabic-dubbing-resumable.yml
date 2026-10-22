@@ -46,7 +46,7 @@ jobs:
             echo "chunk_seconds must be between 120 and 600"; exit 2
           fi
           mkdir -p work/chunks work/source
-          yt-dlp --no-playlist --no-warnings --format "best[height<=720][ext=mp4]/best[height<=720]/best" --merge-output-format mp4 -o "work/source/source.%(ext)s" "$VIDEO_URL"
+          yt-dlp --extractor-args "youtube:player_client=android,ios" --no-playlist --no-warnings --format "best[height<=720][ext=mp4]/best[height<=720]/best" --merge-output-format mp4 -o "work/source/source.%(ext)s" "$VIDEO_URL"
           SRC="$(find work/source -maxdepth 1 -type f ! -name '*.part' | head -n1)"
           test -n "$SRC"
           ffmpeg -y -i "$SRC" -map 0:v:0 -map 0:a:0? -c copy -movflags +faststart work/source/source.mp4
