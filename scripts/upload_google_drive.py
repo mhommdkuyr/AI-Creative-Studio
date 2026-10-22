@@ -124,7 +124,7 @@ def main() -> int:
         if existing:
             item = existing[0]
             request = service.files().update(
-                fileId=item["id"], body=metadata, media_body=media, fields=fields
+                fileId=item["id"], body={k:v for k,v in metadata.items() if k != "parents"}, media_body=media, fields=fields
             )
         else:
             request = service.files().create(body=metadata, media_body=media, fields=fields)
