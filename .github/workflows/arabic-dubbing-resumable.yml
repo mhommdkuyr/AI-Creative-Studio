@@ -170,13 +170,21 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-          cache: pip
       - name: Install media and dubbing dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg
           python -m pip install --upgrade pip
-          pip install faster-whisper deep-translator edge-tts
+          pip install faster-whisper argostranslate deep-translator edge-tts
+      - name: Restore offline translation model cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.local/share/argos-translate
+            ~/.local/cache/argos-translate
+          key: arabic-dub-argos-${{ runner.os }}-${{ matrix.chunk }}-${{ github.run_id }}
+          restore-keys: |
+            arabic-dub-argos-${{ runner.os }}-
       - name: Restore source/config-specific chunk checkpoint
         id: cache
         uses: actions/cache/restore@v4
