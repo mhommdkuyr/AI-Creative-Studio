@@ -37,6 +37,7 @@ jobs:
           run-id: ${{ inputs.source_run_id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Verify existing MP4 and manifest before upload
+        id: verify-artifact
         env:
           TASK_ID: ${{ inputs.task_id }}
         run: |
@@ -68,18 +69,18 @@ jobs:
               raise SystemExit("Artifact is missing a video stream.")
           if not any(s.get("codec_type")=="audio" and s.get("codec_name")=="aac" for s in p.get("streams",[])):
               raise SystemExit("Artifact is missing AAC audio.")
-          with open(os.environ["GITHUB_ENV"],"a",encoding="utf-8") as f:
-              f.write(f"VERIFIED_SHA256={digest}\n")
-              f.write(f"SOURCE_SHA256={manifest['source_sha256']}\n")
+          with open(os.environ["GITHUB_OUTPUT"],"a",encoding="utf-8") as f:
+              f.write(f"verified_sha256={digest}\n")
+              f.write(f"source_sha256={manifest['source_sha256']}\n")
           print("Existing artifact verified; dubbing will not be run again.")
           PY
       - name: Upload verified artifact to Google Drive
         env:
           GOOGLE_DRIVE_CREDENTIALS: ${{ secrets.GOOGLE_DRIVE_CREDENTIALS }}
           GOOGLE_DRIVE_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_FOLDER_ID }}
-          EXPECTED_OUTPUT_SHA256: ${{ env.VERIFIED_SHA256 }}
+          EXPECTED_OUTPUT_SHA256: ${{ steps.verify-artifact.outputs.verified_sha256 }}
           TASK_ID: ${{ inputs.task_id }}
-          SOURCE_SHA256: ${{ env.SOURCE_SHA256 }}
+          SOURCE_SHA256: ${{ steps.verify-artifact.outputs.source_sha256 }}
         run: |
           set -euo pipefail
           if [ -z "$GOOGLE_DRIVE_CREDENTIALS" ] || [ -z "$GOOGLE_DRIVE_FOLDER_ID" ]; then
