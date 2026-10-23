@@ -12,7 +12,7 @@ on:
         required: true
         type: choice
         options: ["no", "yes"]
-        default: "yes"
+        default: "no"
       asr_model:
         description: "faster-whisper CPU model"
         required: true
