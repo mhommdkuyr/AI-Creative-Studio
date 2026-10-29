@@ -2,9 +2,15 @@ name: Align existing character dialogue and map Chinese source utterances
 
 on:
   workflow_dispatch:
+  workflow_run:
+    workflows:
+      - Analyze episode dialogue and existing Arabic voice tracks
+    types: [completed]
+    branches: [main]
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: episode-dialogue-alignment
@@ -12,6 +18,7 @@ concurrency:
 
 jobs:
   align:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 180
     steps:
