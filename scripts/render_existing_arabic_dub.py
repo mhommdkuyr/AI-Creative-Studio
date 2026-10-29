@@ -160,6 +160,9 @@ def main():
     segments=[]; report=[]
     for n,(key,a) in enumerate(sorted(selected.items(),key=lambda kv:float(kv[1]["source_start"]))):
         sid,ui=key; line=lines[key]
+        word_coverage=float(line.get("word_alignment_coverage",0) or 0)
+        if word_coverage < 0.45:
+            continue
         src_start=float(a["source_start"]); src_end=float(a["source_end"])
         # Give the line the larger of the detected source segment and 350 ms, but never extend beyond the video.
         target=max(0.35,min(video_duration,src_end)-src_start)
@@ -173,6 +176,7 @@ def main():
           "source_segment_index":a["source_segment_index"],"source_start":src_start,"source_end":src_end,
           "speaker_script_id":sid,"utterance_index":ui,"confidence":float(a["confidence"]),
           "voice_master":Path(line["voice_path"]).name,"voice_start":raw_start,"voice_end":raw_end,
+          "arabic_word_alignment_coverage":round(word_coverage,3),
           "voice_duration":raw_duration,"fitted_duration":round(fitted_duration,3),"target_duration":round(target,3),
           "atempo":round(atempo,3),"timing_overrun":fitted_duration>target+0.12
         })
