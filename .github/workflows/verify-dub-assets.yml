@@ -1,0 +1,73 @@
+name: Verify and stage ten Arabic character voice masters
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install download and media inspection tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+          python -m pip install --upgrade pip
+          python -m pip install gdown
+      - name: Download the five direct WAV files and the 06-10 bundle
+        run: |
+          set -euo pipefail
+          mkdir -p staged/extracted staged/final
+          gdown "1mrtadf_yTJtk9vv2OIEqCSyhi-O_VJjA" --output "staged/01_لي_يانغ_Leda.wav" --continue
+          gdown "1n-E4VaPurnlbvaT5V_5taMXNHaGC8Ipl" --output "staged/02_لو_مينغ_Achird.wav" --continue
+          gdown "10cFLVZkb79xhYlBIYatBn_6s2hOjc4Os" --output "staged/03_تشوانغ_شيان_يوي_Kore.wav" --continue
+          gdown "1ZGttKXDYt6lzCtcCYU_2qr84ZgPXHDJq" --output "staged/04_فو_شاوتشينغ_Puck.wav" --continue
+          gdown "11HSnZ57lpUBlvztteIXF58FLydtJOD_J" --output "staged/05_شيا_مو_يان_Zephyr.wav" --continue
+          gdown "1kW388RgJNpoVCFEE8HRU18x4sX250bBf" --output "staged/remaining_06_10.zip" --continue
+          unzip -oq staged/remaining_06_10.zip -d staged/extracted
+          find staged/extracted -type f -name '*.wav' -exec cp -f {} staged/ \;
+          find staged -maxdepth 1 -type f -name '*.wav' -exec cp -f {} staged/final/ \;
+          test "$(find staged/final -maxdepth 1 -type f -name '*.wav' | wc -l)" -eq 10
+      - name: Validate WAV streams, duration, signal, and checksums
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json,hashlib,subprocess,pathlib, numpy as np, soundfile as sf
+          root=pathlib.Path("staged/final")
+          report=[]
+          for p in sorted(root.glob("*.wav")):
+              x,sr=sf.read(str(p),dtype="float32")
+              if x.ndim==1: channels=1
+              else: channels=x.shape[1]
+              peak=float(np.max(np.abs(x))) if x.size else 0
+              rms=float(np.sqrt(np.mean(np.square(x)))) if x.size else 0
+              if not x.size or peak<0.002 or rms<0.0005: raise SystemExit(f"Empty/silent audio: {p.name}")
+              if sr<16000 or channels<1: raise SystemExit(f"Unexpected WAV stream: {p.name}")
+              meta={"file":p.name,"bytes":p.stat().st_size,"sample_rate":sr,"channels":channels,"duration_seconds":round(len(x)/sr,3),"peak":round(peak,5),"rms":round(rms,6),"sha256":hashlib.sha256(p.read_bytes()).hexdigest()}
+              report.append(meta)
+              print(json.dumps(meta,ensure_ascii=False))
+          if len(report)!=10: raise SystemExit(f"Expected 10 tracks, found {len(report)}")
+          pathlib.Path("staged/voice_assets_manifest.json").write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding="utf-8")
+          with open(__import__("os").environ["GITHUB_STEP_SUMMARY"],"a",encoding="utf-8") as f:
+              f.write("## Arabic voice assets verified\n\n")
+              f.write(f"- Tracks: {len(report)}\n")
+              f.write(f"- Total duration: {sum(x['duration_seconds'] for x in report)/60:.2f} minutes\n")
+              for x in report: f.write(f"- {x['file']}: {x['duration_seconds']:.2f}s, {x['sample_rate']} Hz, {x['bytes']} bytes\n")
+          PY
+      - name: Save complete ten-track bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: verified-arabic-voice-masters-${{ github.run_id }}
+          path: |
+            staged/final/
+            staged/voice_assets_manifest.json
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 1
