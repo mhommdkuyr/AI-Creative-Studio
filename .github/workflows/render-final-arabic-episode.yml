@@ -1,0 +1,124 @@
+name: Render final Arabic episode using existing character voice masters
+
+on:
+  workflow_dispatch:
+    inputs:
+      alignment_run_id:
+        description: "Successful run ID from align-and-map-existing-dialogue.yml"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: final-arabic-episode-render
+  cancel-in-progress: false
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: h776117073-eng/MPC
+          ref: main
+          path: mpc
+          persist-credentials: false
+      - name: Download validated source-to-voice alignment package
+        uses: actions/download-artifact@v4
+        with:
+          name: episode-dialogue-alignment-${{ inputs.alignment_run_id }}
+          path: work/analysis
+          run-id: ${{ inputs.alignment_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install FFmpeg, Demucs and render dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+          python -m pip install --upgrade pip
+          python -m pip install "numpy<2" soundfile "demucs>=4.0.1"
+      - name: Download original episode and existing Arabic character voice masters
+        run: |
+          set -euo pipefail
+          mkdir -p work/source work/voices work/separated work/render
+          gdown "https://drive.google.com/file/d/13AL8R54GE-S41TsIbXGX1rhIa-Y0HZm-/view?usp=drivesdk" --output work/source/episode.mkv --continue
+          gdown "1mrtadf_yTJtk9vv2OIEqCSyhi-O_VJjA" --output "work/voices/01_لي_يانغ_Leda.wav" --continue
+          gdown "1n-E4VaPurnlbvaT5V_5taMXNHaGC8Ipl" --output "work/voices/02_لو_مينغ_Achird.wav" --continue
+          gdown "10cFLVZkb79xhYlBIYatBn_6s2hOjc4Os" --output "work/voices/03_تشوانغ_شيان_يوي_Kore.wav" --continue
+          gdown "1ZGttKXDYt6lzCtcCYU_2qr84ZgPXHDJq" --output "work/voices/04_فو_شاوتشينغ_Puck.wav" --continue
+          gdown "11HSnZ57lpUBlvztteIXF58FLydtJOD_J" --output "work/voices/05_شيا_مو_يان_Zephyr.wav" --continue
+          gdown "1kW388RgJNpoVCFEE8HRU18x4sX250bBf" --output work/voices/remaining_06_10.zip --continue
+          mkdir -p work/voices/extracted
+          unzip -oq work/voices/remaining_06_10.zip -d work/voices/extracted
+          find work/voices/extracted -type f -name '*.wav' -exec cp -f {} work/voices/ \;
+          test "$(find work/voices -maxdepth 1 -type f -name '*.wav' | wc -l)" -eq 10
+          test -s work/analysis/voice_line_timing.json
+          test -s work/analysis/source_to_arabic_lines.json
+          test -s work/analysis/source_speakers.json
+      - name: Extract full-resolution source audio for music and effects separation
+        run: |
+          set -euo pipefail
+          ffmpeg -y -v error -i work/source/episode.mkv -map 0:a:0 -vn -ac 2 -ar 44100 -c:a pcm_s16le work/source/episode_44k_stereo.wav
+          test -s work/source/episode_44k_stereo.wav
+      - name: Separate original dialogue from background music and effects
+        env:
+          OMP_NUM_THREADS: "2"
+          MKL_NUM_THREADS: "2"
+        run: |
+          set -euo pipefail
+          python -m demucs -n mdx_q --two-stems=vocals --device cpu --shifts 1 --overlap 0.1 --out work/separated work/source/episode_44k_stereo.wav
+          test -s work/separated/mdx_q/episode_44k_stereo/no_vocals.wav
+          test -s work/separated/mdx_q/episode_44k_stereo/vocals.wav
+          ffprobe -v error -show_entries format=duration,size -of json work/separated/mdx_q/episode_44k_stereo/no_vocals.wav > work/render/background_probe.json
+      - name: Build Arabic dialogue timeline using only the ten existing voice masters
+        run: |
+          set -euo pipefail
+          python scripts/render_existing_arabic_dub.py \
+            --video work/source/episode.mkv \
+            --voices-dir work/voices \
+            --bed-audio work/separated/mdx_q/episode_44k_stereo/no_vocals.wav \
+            --voice-line-timing work/analysis/voice_line_timing.json \
+            --source-map work/analysis/source_to_arabic_lines.json \
+            --speakers-json mpc/data/speakers.json \
+            --out-dir work/render \
+            --min-confidence 0.55 \
+            --max-atempo 1.45
+      - name: Verify finished MKV and preserve source picture
+        run: |
+          set -euo pipefail
+          test -s work/render/الحلقة_مدبلجة_بالعربية.mkv
+          ffprobe -v error -show_format -show_streams -of json work/render/الحلقة_مدبلجة_بالعربية.mkv > work/render/final_probe.json
+          python - <<'PY'
+          import json,pathlib
+          p=json.load(open("work/render/final_probe.json",encoding="utf-8"))
+          v=[x for x in p["streams"] if x.get("codec_type")=="video"]
+          a=[x for x in p["streams"] if x.get("codec_type")=="audio"]
+          if not v or not a: raise SystemExit("Missing video or dubbed audio stream")
+          if int(v[0].get("width",0))!=1080 or int(v[0].get("height",0))!=1920: raise SystemExit("Unexpected video frame size")
+          if float(p["format"]["duration"])<6000: raise SystemExit("Final video appears truncated")
+          m=json.load(open("work/render/render_manifest.json",encoding="utf-8"))
+          if m.get("status")!="DUBBED_VIDEO_RENDERED_AND_VERIFIED": raise SystemExit("Render manifest not verified")
+          print(json.dumps({"duration":p["format"]["duration"],"video_codec":v[0].get("codec_name"),"audio_codec":a[0].get("codec_name"),"bytes":pathlib.Path("work/render/الحلقة_مدبلجة_بالعربية.mkv").stat().st_size,"matched_lines":m.get("matched_line_count"),"timing_overruns":m.get("timing_overrun_count")},ensure_ascii=False))
+          PY
+      - name: Upload finished episode and verification reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: final-arabic-dubbed-episode-${{ github.run_id }}
+          path: |
+            work/render/الحلقة_مدبلجة_بالعربية.mkv
+            work/render/الحلقة_مدبلجة_ترجمة_مرجعية.srt
+            work/render/render_manifest.json
+            work/render/final_probe.json
+            work/analysis/source_to_arabic_lines.json
+            work/analysis/voice_line_timing.json
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 1
