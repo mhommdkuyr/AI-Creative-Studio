@@ -14,6 +14,30 @@ on:
         type: choice
         options: ["base","small"]
         default: "small"
+      voice01_url:
+        description: "Temporary authenticated download URL for voice track 01"
+        required: true
+        type: string
+      voice02_url:
+        description: "Temporary authenticated download URL for voice track 02"
+        required: true
+        type: string
+      voice03_url:
+        description: "Temporary authenticated download URL for voice track 03"
+        required: true
+        type: string
+      voice04_url:
+        description: "Temporary authenticated download URL for voice track 04"
+        required: true
+        type: string
+      voice05_url:
+        description: "Temporary authenticated download URL for voice track 05"
+        required: true
+        type: string
+      voice_zip_url:
+        description: "Temporary authenticated download URL for WAV tracks 06-10 bundle"
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -59,17 +83,23 @@ jobs:
       - name: Download source episode and all ten Arabic voice masters
         env:
           SOURCE_URL: ${{ inputs.source_url }}
+          VOICE_01_URL: ${{ inputs.voice01_url }}
+          VOICE_02_URL: ${{ inputs.voice02_url }}
+          VOICE_03_URL: ${{ inputs.voice03_url }}
+          VOICE_04_URL: ${{ inputs.voice04_url }}
+          VOICE_05_URL: ${{ inputs.voice05_url }}
+          VOICE_ZIP_URL: ${{ inputs.voice_zip_url }}
         run: |
           set -euo pipefail
           mkdir -p work/source work/voices work/analysis
           gdown "$SOURCE_URL" --output work/source/episode.mkv --continue
           test -s work/source/episode.mkv
-          gdown "1mrtadf_yTJtk9vv2OIEqCSyhi-O_VJjA" --output work/voices/01_لي_يانغ_Leda.wav --continue
-          gdown "1n-E4VaPurnlbvaT5V_5taMXNHaGC8Ipl" --output work/voices/02_لو_مينغ_Achird.wav --continue
-          gdown "10cFLVZkb79xhYlBIYatBn_6s2hOjc4Os" --output work/voices/03_تشوانغ_شيان_يوي_Kore.wav --continue
-          gdown "1ZGttKXDYt6lzCtcCYU_2qr84ZgPXHDJq" --output work/voices/04_فو_شاوتشينغ_Puck.wav --continue
-          gdown "11HSnZ57lpUBlvztteIXF58FLydtJOD_J" --output work/voices/05_شيا_مو_يان_Zephyr.wav --continue
-          gdown "1kW388RgJNpoVCFEE8HRU18x4sX250bBf" --output work/voices/remaining_06_10.zip --continue
+          curl --fail --location --silent --show-error --retry 3 "$VOICE_01_URL" --output work/voices/01_لي_يانغ_Leda.wav
+          curl --fail --location --silent --show-error --retry 3 "$VOICE_02_URL" --output work/voices/02_لو_مينغ_Achird.wav
+          curl --fail --location --silent --show-error --retry 3 "$VOICE_03_URL" --output work/voices/03_تشوانغ_شيان_يوي_Kore.wav
+          curl --fail --location --silent --show-error --retry 3 "$VOICE_04_URL" --output work/voices/04_فو_شاوتشينغ_Puck.wav
+          curl --fail --location --silent --show-error --retry 3 "$VOICE_05_URL" --output work/voices/05_شيا_مو_يان_Zephyr.wav
+          curl --fail --location --silent --show-error --retry 3 "$VOICE_ZIP_URL" --output work/voices/remaining_06_10.zip
           mkdir -p work/voices/extracted
           unzip -oq work/voices/remaining_06_10.zip -d work/voices/extracted
           find work/voices/extracted -type f -name '*.wav' -exec cp -f {} work/voices/ \;
@@ -88,7 +118,13 @@ jobs:
           ASR_MODEL: ${{ inputs.asr_model }}
         run: |
           set -euo pipefail
-          python scripts/analyze_existing_dub_tracks.py             --source-audio work/source/chinese_source_16k.wav             --voice-dir work/voices             --speakers-json mpc/data/speakers.json             --out-dir work/analysis             --model "$ASR_MODEL"             --max-speakers 14
+          python scripts/analyze_existing_dub_tracks.py \
+            --source-audio work/source/chinese_source_16k.wav \
+            --voice-dir work/voices \
+            --speakers-json mpc/data/speakers.json \
+            --out-dir work/analysis \
+            --model "$ASR_MODEL" \
+            --max-speakers 14
       - name: Save checkpoints
         if: always() && steps.cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
