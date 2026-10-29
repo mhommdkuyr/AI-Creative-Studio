@@ -1,0 +1,75 @@
+name: Align existing character dialogue and map Chinese source utterances
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: episode-dialogue-alignment
+  cancel-in-progress: false
+
+jobs:
+  align:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - name: Checkout the Arabic dialogue script
+        uses: actions/checkout@v4
+        with:
+          repository: h776117073-eng/MPC
+          ref: main
+          path: mpc
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Restore completed analysis checkpoint
+        id: cache
+        uses: actions/cache/restore@v4
+        with:
+          path: work/analysis/
+          key: dialogue-alignment-${{ github.run_id }}
+          restore-keys: |
+            episode-existing-voices-small-
+      - name: Verify the source and ten Arabic transcript checkpoints
+        run: |
+          set -euo pipefail
+          test -s work/analysis/source_speakers.json
+          test -s work/analysis/speaker_scripts.json
+          test -d work/analysis/voice_tracks
+          test "$(find work/analysis/voice_tracks -maxdepth 1 -type f -name '*.json' | wc -l)" -eq 10
+      - name: Align Arabic WAV master words to each written utterance
+        run: |
+          set -euo pipefail
+          python scripts/align_dub_lines.py \
+            --speakers-json mpc/data/speakers.json \
+            --voice-asr-dir work/analysis/voice_tracks \
+            --out work/analysis/voice_line_timing.json
+      - name: Semantically map Chinese source dialogue to Arabic line IDs
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_API_KEY_2: ${{ secrets.GEMINI_API_KEY_2 }}
+        run: |
+          set -euo pipefail
+          python scripts/map_chinese_dialogue_to_arabic_script.py \
+            --source-speakers work/analysis/source_speakers.json \
+            --speaker-scripts work/analysis/speaker_scripts.json \
+            --out work/analysis/source_to_arabic_lines.json \
+            --model gemini-3.8-flash \
+            --batch-size 300 \
+            --max-output-tokens 16384
+      - name: Upload alignment and semantic mapping reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: episode-dialogue-alignment-${{ github.run_id }}
+          path: |
+            work/analysis/voice_line_timing.json
+            work/analysis/source_to_arabic_lines.json
+            work/analysis/analysis_manifest.json
+            work/analysis/source_speakers.json
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 6
