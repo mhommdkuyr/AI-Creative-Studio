@@ -5,13 +5,13 @@ import argparse, hashlib, json, os, re, time, urllib.request, urllib.error
 from pathlib import Path
 
 TAG=re.compile(r"<[^<>]+>")
-BRACKET=re.compile(r"\[[^\]]*\]")
-SPLIT=re.compile(r"\s*\.\.\.\s*")
+BRACKET=re.compile(r"\\[[^\\]]*\\]")
+SPLIT=re.compile(r"\\s*\\.\\.\\.\\s*")
 
 def utterances(speaker):
     out=[]
     for raw in SPLIT.split(speaker.get("text","")):
-        text=re.sub(r"\s+"," ",TAG.sub(" ",BRACKET.sub(" ",raw)).strip())
+        text=re.sub(r"\\s+"," ",TAG.sub(" ",BRACKET.sub(" ",raw)).strip())
         if text: out.append({"utterance_index":len(out)+1,"text":text})
     return out
 
@@ -51,20 +51,47 @@ def call_gemini(prompt,keys,model,max_output_tokens):
     }
     body=json.dumps(payload,ensure_ascii=False).encode("utf-8")
     errors=[]
-    for key in keys:
-        req=urllib.request.Request(url,data=body,headers={"Content-Type":"application/json","x-goog-api-key":key},method="POST")
-        try:
-            with urllib.request.urlopen(req,timeout=600) as resp:
-                data=json.loads(resp.read().decode("utf-8"))
-            text=data["candidates"][0]["content"]["parts"][0]["text"]
-            return json.loads(text)
-        except urllib.error.HTTPError as exc:
-            detail=exc.read().decode("utf-8","replace")[:900]
-            errors.append(f"HTTP {exc.code}: {detail}")
-            if exc.code not in (401,403,429,500,503): break
-        except Exception as exc:
-            errors.append(type(exc).__name__+": "+str(exc)[:400])
-    raise RuntimeError("Gemini alignment failed: "+" | ".join(errors))
+    retryable_codes={408,429,500,502,503,504}
+    # Gemini occasionally returns transient 503 UNAVAILABLE responses during demand spikes.
+    # Retry across both configured keys with bounded exponential backoff before failing the batch.
+    for attempt in range(7):
+        retryable=False
+        attempt_errors=[]
+        for key in keys:
+            req=urllib.request.Request(url,data=body,headers={"Content-Type":"application/json","x-goog-api-key":key},method="POST")
+            try:
+                with urllib.request.urlopen(req,timeout=600) as resp:
+                    data=json.loads(resp.read().decode("utf-8"))
+                text=data["candidates"][0]["content"]["parts"][0]["text"]
+                return json.loads(text)
+            except urllib.error.HTTPError as exc:
+                detail=exc.read().decode("utf-8","replace")[:900]
+                message=f"HTTP {exc.code}: {detail}"
+                errors.append(message)
+                attempt_errors.append(message)
+                if exc.code in retryable_codes:
+                    retryable=True
+                    continue
+                if exc.code in (401,403):
+                    continue
+                raise RuntimeError("Gemini alignment failed: "+" | ".join(errors))
+            except (TimeoutError, urllib.error.URLError) as exc:
+                message=type(exc).__name__+": "+str(exc)[:400]
+                errors.append(message)
+                attempt_errors.append(message)
+                retryable=True
+            except Exception as exc:
+                message=type(exc).__name__+": "+str(exc)[:400]
+                errors.append(message)
+                attempt_errors.append(message)
+                retryable=True
+        if not retryable:
+            break
+        if attempt < 6:
+            delay=min(60,8*(2**attempt))
+            print(f"Gemini temporary error; retry {attempt+2}/7 in {delay}s: {' | '.join(attempt_errors)[:500]}",flush=True)
+            time.sleep(delay)
+    raise RuntimeError("Gemini alignment failed after retries: "+" | ".join(errors[-14:]))
 
 def main():
     ap=argparse.ArgumentParser()
