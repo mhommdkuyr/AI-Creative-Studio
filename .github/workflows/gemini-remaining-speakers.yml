@@ -92,38 +92,21 @@ jobs:
           print("Valid Gemini credentials available:", ", ".join(valid))
           PY
 
-      - name: Verify Google Drive service account and target folder before synthesis
+      - name: Check optional direct Drive credentials
         shell: bash
         run: |
-          python - <<'PY'
-          import json, os, requests
-          from google.oauth2 import service_account
-          from google.auth.transport.requests import Request
-          raw=os.getenv("GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON","").strip()
-          folder=os.getenv("GOOGLE_DRIVE_FOLDER_ID","").strip()
-          if not raw:
-              raise SystemExit("GOOGLE_DRIVE_CREDENTIALS is missing in AI-Creative-Studio Actions secrets; no TTS requests were sent.")
-          try:
-              info=json.loads(raw)
-              creds=service_account.Credentials.from_service_account_info(
-                  info, scopes=["https://www.googleapis.com/auth/drive"]
-              )
-              creds.refresh(Request())
-              response=requests.get(
-                  f"https://www.googleapis.com/drive/v3/files/{folder}",
-                  headers={"Authorization":f"Bearer {creds.token}"},
-                  params={"fields":"id,name,mimeType"},
-                  timeout=30,
-              )
-              response.raise_for_status()
-              data=response.json()
-              if data.get("mimeType")!="application/vnd.google-apps.folder":
-                  raise SystemExit("The configured destination is not a Google Drive folder.")
-              print("Google Drive service account authenticated and destination folder is accessible.")
-          except Exception as exc:
-              raise SystemExit(f"Google Drive preflight failed before TTS generation: {type(exc).__name__}: {str(exc)[:300]}")
-          PY
+          if [ -z "$GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON" ]; then
+            echo "No Drive service-account secret in this repository; continue synthesis and preserve WAVs as an Actions artifact for upload through the connected Drive account."
+          else
+            echo "Drive service-account secret is configured; the synthesis script will upload each WAV directly."
+          fi
 
+      - name: Verify the destination folder ID
+        shell: bash
+        run: |
+          test "$GOOGLE_DRIVE_FOLDER_ID" = "1SE3JYbB4c-pC1W-ymRK6S5CsFt-XidzA"
+          echo "The destination is the existing dubbing folder."
+          
       - name: Restore resumable WAV masters and manifest
         id: cache
         uses: actions/cache/restore@v4
