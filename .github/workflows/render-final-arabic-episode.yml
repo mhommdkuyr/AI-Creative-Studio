@@ -1,12 +1,11 @@
 name: Render final Arabic episode using existing character voice masters
 
 on:
-  workflow_dispatch:
-    inputs:
-      alignment_run_id:
-        description: "Successful run ID from align-and-map-existing-dialogue.yml"
-        required: true
-        type: string
+  workflow_run:
+    workflows:
+      - Align existing character dialogue and map Chinese source utterances
+    types: [completed]
+    branches: [main]
 
 permissions:
   contents: read
@@ -18,6 +17,7 @@ concurrency:
 
 jobs:
   render:
+    if: github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 360
     steps:
@@ -31,9 +31,9 @@ jobs:
       - name: Download validated source-to-voice alignment package
         uses: actions/download-artifact@v4
         with:
-          name: episode-dialogue-alignment-${{ inputs.alignment_run_id }}
+          name: episode-dialogue-alignment-${{ github.event.workflow_run.id }}
           path: work/analysis
-          run-id: ${{ inputs.alignment_run_id }}
+          run-id: ${{ github.event.workflow_run.id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
       - uses: actions/setup-python@v5
         with:
