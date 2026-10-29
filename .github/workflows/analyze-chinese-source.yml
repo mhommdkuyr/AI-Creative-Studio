@@ -1,0 +1,105 @@
+name: Analyze Chinese source dialogue and anonymous speaker turns
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_url:
+        description: "Google Drive source episode"
+        required: true
+        type: string
+        default: "https://drive.google.com/file/d/13AL8R54GE-S41TsIbXGX1rhIa-Y0HZm-/view?usp=drivesdk"
+      asr_model:
+        description: "Multilingual Whisper model"
+        required: true
+        type: choice
+        options: ["base","small"]
+        default: "small"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: episode-chinese-source-asr
+  cancel-in-progress: false
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+      - name: Checkout Arabic dialogue scripts
+        uses: actions/checkout@v4
+        with:
+          repository: h776117073-eng/MPC
+          ref: main
+          path: mpc
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install media and speech analysis libraries
+        run: |
+          set -euo pipefail
+          command -v ffmpeg >/dev/null || (sudo apt-get update && sudo apt-get install -y ffmpeg)
+          python -m pip install --upgrade pip
+          python -m pip install "numpy<2" soundfile faster-whisper "speechbrain>=1.0.3" "scikit-learn>=1.4" gdown
+      - name: Restore model cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/huggingface/hub/
+            ~/.cache/torch/
+          key: chinese-source-asr-${{ inputs.asr_model }}-${{ github.run_id }}
+          restore-keys: |
+            episode-existing-voices-small-
+            chinese-source-asr-${{ inputs.asr_model }}-
+      - name: Download episode
+        env:
+          SOURCE_URL: ${{ inputs.source_url }}
+        run: |
+          set -euo pipefail
+          mkdir -p work/source work/voices work/analysis
+          gdown "$SOURCE_URL" --output work/source/episode.mkv --continue
+          test -s work/source/episode.mkv
+          ffprobe -v error -show_entries format=duration,size -of json work/source/episode.mkv > work/source/source_video_probe.json
+      - name: Extract source dialogue audio
+        run: |
+          set -euo pipefail
+          ffmpeg -y -v error -i work/source/episode.mkv -map 0:a:0 -vn -ac 1 -ar 16000 -c:a pcm_s16le work/source/chinese_source_16k.wav
+          test -s work/source/chinese_source_16k.wav
+          ffprobe -v error -show_entries format=duration,size -of json work/source/chinese_source_16k.wav > work/source/source_audio_probe.json
+      - name: Transcribe Chinese dialogue and cluster anonymous speakers
+        run: |
+          set -euo pipefail
+          python scripts/analyze_existing_dub_tracks.py \
+            --source-audio work/source/chinese_source_16k.wav \
+            --voice-dir work/voices \
+            --speakers-json mpc/data/speakers.json \
+            --out-dir work/analysis \
+            --model "${{ inputs.asr_model }}" \
+            --max-speakers 14
+      - name: Save model cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cache/huggingface/hub/
+            ~/.cache/torch/
+          key: chinese-source-asr-${{ inputs.asr_model }}-${{ github.run_id }}
+      - name: Upload Chinese transcript and diarization report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chinese-source-asr-${{ github.run_id }}
+          path: |
+            work/analysis/source_transcript_words.json
+            work/analysis/source_speakers.json
+            work/analysis/speaker_scripts.json
+            work/analysis/analysis_manifest.json
+            work/source/source_audio_probe.json
+            work/source/source_video_probe.json
+          if-no-files-found: warn
+          retention-days: 30
+          compression-level: 6
