@@ -52,8 +52,7 @@ def call_gemini(prompt,keys,model,max_output_tokens):
     body=json.dumps(payload,ensure_ascii=False).encode("utf-8")
     errors=[]
     retryable_codes={408,429,500,502,503,504}
-    # Gemini occasionally returns transient 503 UNAVAILABLE responses during demand spikes.
-    # Retry across both configured keys with bounded exponential backoff before failing the batch.
+    # Retry temporary Gemini demand spikes across the configured keys.
     for attempt in range(7):
         retryable=False
         attempt_errors=[]
