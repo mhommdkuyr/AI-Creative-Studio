@@ -39,23 +39,28 @@ jobs:
         run: |
           set -euo pipefail
           python - <<'PY'
-          import json,hashlib,subprocess,pathlib, numpy as np, soundfile as sf
+          import json,hashlib,subprocess,pathlib,re,os
           root=pathlib.Path("staged/final")
           report=[]
           for p in sorted(root.glob("*.wav")):
-              x,sr=sf.read(str(p),dtype="float32")
-              if x.ndim==1: channels=1
-              else: channels=x.shape[1]
-              peak=float(np.max(np.abs(x))) if x.size else 0
-              rms=float(np.sqrt(np.mean(np.square(x)))) if x.size else 0
-              if not x.size or peak<0.002 or rms<0.0005: raise SystemExit(f"Empty/silent audio: {p.name}")
-              if sr<16000 or channels<1: raise SystemExit(f"Unexpected WAV stream: {p.name}")
-              meta={"file":p.name,"bytes":p.stat().st_size,"sample_rate":sr,"channels":channels,"duration_seconds":round(len(x)/sr,3),"peak":round(peak,5),"rms":round(rms,6),"sha256":hashlib.sha256(p.read_bytes()).hexdigest()}
-              report.append(meta)
-              print(json.dumps(meta,ensure_ascii=False))
+              raw=subprocess.check_output(["ffprobe","-v","error","-select_streams","a:0","-show_entries","stream=sample_rate,channels,codec_name","-show_entries","format=duration,size","-of","json",str(p)],text=True)
+              meta0=json.loads(raw); streams=meta0.get("streams",[])
+              if len(streams)!=1: raise SystemExit(f"No single audio stream: {p.name}")
+              s=streams[0]; sr=int(s["sample_rate"]); channels=int(s["channels"])
+              duration=float(meta0["format"]["duration"])
+              if sr<16000 or channels<1 or duration<=0: raise SystemExit(f"Unexpected WAV stream: {p.name}")
+              vol=subprocess.run(["ffmpeg","-hide_banner","-i",str(p),"-af","volumedetect","-f","null","-"],capture_output=True,text=True)
+              log=vol.stderr
+              m=re.search(r"max_volume:\s*(-?\d+(?:\.\d+)?) dB",log)
+              if vol.returncode!=0 or not m: raise SystemExit(f"Could not verify audio signal: {p.name}")
+              peak_db=float(m.group(1))
+              if peak_db < -55: raise SystemExit(f"Silent or extremely quiet WAV: {p.name}")
+              item={"file":p.name,"bytes":p.stat().st_size,"sample_rate":sr,"channels":channels,"duration_seconds":round(duration,3),"peak_db":peak_db,"sha256":hashlib.sha256(p.read_bytes()).hexdigest()}
+              report.append(item)
+              print(json.dumps(item,ensure_ascii=False))
           if len(report)!=10: raise SystemExit(f"Expected 10 tracks, found {len(report)}")
           pathlib.Path("staged/voice_assets_manifest.json").write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding="utf-8")
-          with open(__import__("os").environ["GITHUB_STEP_SUMMARY"],"a",encoding="utf-8") as f:
+          with open(os.environ["GITHUB_STEP_SUMMARY"],"a",encoding="utf-8") as f:
               f.write("## Arabic voice assets verified\n\n")
               f.write(f"- Tracks: {len(report)}\n")
               f.write(f"- Total duration: {sum(x['duration_seconds'] for x in report)/60:.2f} minutes\n")
