@@ -1,0 +1,57 @@
+name: Align words in existing Arabic voice masters to speaker scripts
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  align:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Checkout Arabic dialogue scripts
+        uses: actions/checkout@v4
+        with:
+          repository: h776117073-eng/MPC
+          ref: main
+          path: mpc
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Restore transcript checkpoint cache from episode analysis
+        id: cache
+        uses: actions/cache/restore@v4
+        with:
+          path: work/analysis/
+          key: voice-line-align-${{ github.run_id }}
+          restore-keys: |
+            episode-existing-voices-small-
+      - name: Verify source and voice ASR checkpoints exist
+        run: |
+          set -euo pipefail
+          test -s work/analysis/source_transcript_words.json
+          test -s work/analysis/source_speakers.json
+          test -d work/analysis/voice_tracks
+          test "$(find work/analysis/voice_tracks -maxdepth 1 -name '*.json' | wc -l)" -eq 10
+      - name: Align Arabic WAV words to ordered utterances
+        run: |
+          set -euo pipefail
+          python scripts/align_dub_lines.py \
+            --speakers-json mpc/data/speakers.json \
+            --voice-asr-dir work/analysis/voice_tracks \
+            --out work/analysis/voice_line_timing.json
+      - name: Upload phrase timing map
+        uses: actions/upload-artifact@v4
+        with:
+          name: episode-arabic-voice-line-timings-${{ github.run_id }}
+          path: |
+            work/analysis/voice_line_timing.json
+            work/analysis/analysis_manifest.json
+            work/analysis/source_speakers.json
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 6
