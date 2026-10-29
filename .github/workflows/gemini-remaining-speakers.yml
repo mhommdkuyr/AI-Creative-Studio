@@ -1,0 +1,201 @@
+name: Gemini Arabic character voices 6-10 (resume + Drive)
+
+on:
+  workflow_dispatch:
+    inputs:
+      start_speaker:
+        description: "First remaining speaker number"
+        required: false
+        default: "6"
+        type: string
+      end_speaker:
+        description: "Last remaining speaker number"
+        required: false
+        default: "10"
+        type: string
+  schedule:
+    - cron: "10 7 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gemini-arabic-character-voices
+  cancel-in-progress: false
+
+jobs:
+  synthesize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    env:
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      GEMINI_API_KEY_2: ${{ secrets.GEMINI_API_KEY_2 }}
+      GEMINI_TTS_MODEL: gemini-3.8-flash-tts
+      GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_DRIVE_CREDENTIALS }}
+      GOOGLE_DRIVE_FOLDER_ID: 1SE3JYbB4c-pC1W-ymRK6S5CsFt-XidzA
+      START_SPEAKER: ${{ github.event.inputs.start_speaker || '6' }}
+      END_SPEAKER: ${{ github.event.inputs.end_speaker || '10' }}
+      PYTHONUNBUFFERED: "1"
+
+    steps:
+      - name: Checkout AI-Creative-Studio
+        uses: actions/checkout@v4
+
+      - name: Checkout MPC scripts and current Arabic speaker text
+        uses: actions/checkout@v4
+        with:
+          repository: h776117073-eng/MPC
+          ref: main
+          path: mpc
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: mpc/requirements.txt
+
+      - name: Install synthesis and Drive dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r mpc/requirements.txt
+
+      - name: Verify Gemini credentials without printing secrets
+        shell: bash
+        run: |
+          python - <<'PY'
+          import os, requests
+          keys=[("GEMINI_API_KEY",os.getenv("GEMINI_API_KEY","").strip()),
+                ("GEMINI_API_KEY_2",os.getenv("GEMINI_API_KEY_2","").strip())]
+          valid=[]
+          for name,key in keys:
+              if not key:
+                  print(f"{name}: not configured")
+                  continue
+              try:
+                  r=requests.get(
+                      "https://generativelanguage.googleapis.com/v1beta/models",
+                      headers={"x-goog-api-key":key},
+                      params={"pageSize":1000},
+                      timeout=30,
+                  )
+                  if r.ok:
+                      valid.append(name)
+                      print(f"{name}: authenticated successfully")
+                  else:
+                      print(f"{name}: authentication/model-list check failed (HTTP {r.status_code})")
+              except requests.RequestException as exc:
+                  print(f"{name}: network check failed ({type(exc).__name__})")
+          if not valid:
+              raise SystemExit("No configured Gemini API key passed authentication.")
+          print("Valid Gemini credentials available:", ", ".join(valid))
+          PY
+
+      - name: Verify Google Drive service account and target folder before synthesis
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json, os, requests
+          from google.oauth2 import service_account
+          from google.auth.transport.requests import Request
+          raw=os.getenv("GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON","").strip()
+          folder=os.getenv("GOOGLE_DRIVE_FOLDER_ID","").strip()
+          if not raw:
+              raise SystemExit("GOOGLE_DRIVE_CREDENTIALS is missing in AI-Creative-Studio Actions secrets; no TTS requests were sent.")
+          try:
+              info=json.loads(raw)
+              creds=service_account.Credentials.from_service_account_info(
+                  info, scopes=["https://www.googleapis.com/auth/drive"]
+              )
+              creds.refresh(Request())
+              response=requests.get(
+                  f"https://www.googleapis.com/drive/v3/files/{folder}",
+                  headers={"Authorization":f"Bearer {creds.token}"},
+                  params={"fields":"id,name,mimeType"},
+                  timeout=30,
+              )
+              response.raise_for_status()
+              data=response.json()
+              if data.get("mimeType")!="application/vnd.google-apps.folder":
+                  raise SystemExit("The configured destination is not a Google Drive folder.")
+              print("Google Drive service account authenticated and destination folder is accessible.")
+          except Exception as exc:
+              raise SystemExit(f"Google Drive preflight failed before TTS generation: {type(exc).__name__}: {str(exc)[:300]}")
+          PY
+
+      - name: Restore resumable WAV masters and manifest
+        id: cache
+        uses: actions/cache/restore@v4
+        with:
+          path: mpc/output
+          key: gemini-character-wav-${{ hashFiles('mpc/data/speakers.json', 'mpc/scripts/dub_interactions.py') }}-${{ github.run_id }}
+          restore-keys: |
+            gemini-character-wav-${{ hashFiles('mpc/data/speakers.json', 'mpc/scripts/dub_interactions.py') }}-
+
+      - name: Skip synthesis if requested tracks are already complete and uploaded
+        id: completion
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json, os, pathlib
+          p=pathlib.Path("mpc/output/manifest.json")
+          data=json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
+          tracks=data.get("tracks",{})
+          speakers=json.loads(pathlib.Path("mpc/data/speakers.json").read_text(encoding="utf-8"))["speakers"]
+          start=int(os.getenv("START_SPEAKER","6")); end=int(os.getenv("END_SPEAKER","10"))
+          missing=[]
+          for n in range(start,end+1):
+              if 1 <= n <= len(speakers):
+                  row=tracks.get(speakers[n-1]["id"],{})
+                  if row.get("status")!="complete" or not row.get("drive_url"):
+                      missing.append(speakers[n-1]["name"])
+          print("Remaining tracks requiring synthesis or Drive upload:",len(missing))
+          with open(os.environ["GITHUB_OUTPUT"],"a") as f:
+              f.write("complete="+("true" if not missing else "false")+"\n")
+          PY
+
+      - name: Generate and upload remaining speaker WAV masters
+        if: steps.completion.outputs.complete != 'true'
+        working-directory: mpc
+        run: |
+          python scripts/dub_interactions.py \
+            --start-speaker "$START_SPEAKER" \
+            --end-speaker "$END_SPEAKER"
+
+      - name: Save resumable WAV masters and manifest even after a failed attempt
+        if: always() && steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: mpc/output
+          key: gemini-character-wav-${{ hashFiles('mpc/data/speakers.json', 'mpc/scripts/dub_interactions.py') }}-${{ github.run_id }}
+
+      - name: Summarize output and Drive verification
+        if: always()
+        shell: bash
+        run: |
+          echo "## Arabic character voice outputs" >> "$GITHUB_STEP_SUMMARY"
+          if [ -f mpc/output/manifest.json ]; then
+            python - <<'PY'
+          import json, os, pathlib
+          data=json.loads(pathlib.Path("mpc/output/manifest.json").read_text(encoding="utf-8"))
+          with open(os.environ["GITHUB_STEP_SUMMARY"],"a",encoding="utf-8") as f:
+              f.write("| Speaker | Voice | Status | Duration (s) | Drive URL |\n|---|---|---|---:|---|\n")
+              for s in data.get("tracks",{}).values():
+                  url=s.get("drive_url","")
+                  f.write(f"| {s.get('speaker','')} | {s.get('voice','')} | {s.get('status','pending')} | {s.get('duration_seconds','—')} | {url} |\n")
+          PY
+          fi
+          find mpc/output/final -maxdepth 1 -type f -name '*.wav' -printf '%f (%s bytes)\n' 2>/dev/null | tee -a "$GITHUB_STEP_SUMMARY" || true
+
+      - name: Upload WAV masters and manifest as backup artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gemini-arabic-character-voices-${{ github.run_id }}
+          path: |
+            mpc/output/final/*.wav
+            mpc/output/manifest.json
+          if-no-files-found: warn
+          retention-days: 30
+          compression-level: 0
