@@ -1,0 +1,124 @@
+name: Episode Drive preflight (access, streams, subtitles, visual samples)
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_url:
+        description: "Authorized Google Drive episode link"
+        required: true
+        type: string
+        default: "https://drive.google.com/file/d/13AL8R54GE-S41TsIbXGX1rhIa-Y0HZm-/view?usp=drivesdk"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: episode-drive-preflight
+  cancel-in-progress: false
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install media inspection tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+          python -m pip install --upgrade pip
+          python -m pip install gdown
+      - name: Validate Drive URL
+        env:
+          SOURCE_URL: ${{ inputs.source_url }}
+        run: |
+          python - <<'PY'
+          import os
+          from urllib.parse import urlparse
+          p=urlparse(os.environ["SOURCE_URL"].strip())
+          if p.scheme != "https" or p.hostname not in {"drive.google.com","www.drive.google.com"}:
+              raise SystemExit("Only a Google Drive HTTPS file link is accepted.")
+          print("Drive URL validated; not printing the URL.")
+          PY
+      - name: Download exact Drive source
+        env:
+          SOURCE_URL: ${{ inputs.source_url }}
+        run: |
+          set -euo pipefail
+          mkdir -p work/source output/frames output/subtitles
+          gdown --fuzzy "$SOURCE_URL" --output work/source/episode.mkv --continue
+          test -s work/source/episode.mkv
+          echo "download_bytes=$(stat -c%s work/source/episode.mkv)" >> "$GITHUB_OUTPUT"
+      - name: Probe video and enumerate subtitle streams
+        id: probe
+        run: |
+          set -euo pipefail
+          ffprobe -v error -show_format -show_streams -of json work/source/episode.mkv > output/source_probe.json
+          python - <<'PY'
+          import json,hashlib,os
+          p=json.load(open("output/source_probe.json",encoding="utf-8"))
+          streams=p.get("streams",[])
+          fmt=p.get("format",{})
+          if not any(s.get("codec_type")=="video" for s in streams): raise SystemExit("No video stream")
+          if not any(s.get("codec_type")=="audio" for s in streams): raise SystemExit("No audio stream")
+          d=float(fmt.get("duration") or 0)
+          if d<1: raise SystemExit("Invalid or missing duration")
+          def compact(s):
+              tags=s.get("tags") or {}
+              return {k:s.get(k) for k in ("index","codec_type","codec_name","profile","width","height","r_frame_rate","sample_rate","channels","channel_layout","duration") if s.get(k) is not None} | ({"language":tags.get("language"),"title":tags.get("title")} if tags else {})
+          report={"duration_seconds":d,"size_bytes":int(fmt.get("size") or os.path.getsize("work/source/episode.mkv")),"format_name":fmt.get("format_name"),"streams":[compact(s) for s in streams]}
+          report["sha256"]=hashlib.sha256(open("work/source/episode.mkv","rb").read()).hexdigest()
+          json.dump(report,open("output/preflight.json","w",encoding="utf-8"),ensure_ascii=False,indent=2)
+          with open(os.environ["GITHUB_STEP_SUMMARY"],"a",encoding="utf-8") as f:
+              f.write("## Source preflight\n\n")
+              f.write(f"- Duration: {d:.2f}s ({d/60:.2f} min)\n")
+              f.write(f"- Size: {report['size_bytes']} bytes\n")
+              f.write(f"- Format: {report['format_name']}\n")
+              f.write(f"- Streams: {len(streams)} total\n")
+              f.write(f"- Subtitle streams: {sum(1 for s in streams if s.get('codec_type')=='subtitle')}\n")
+              f.write(f"- SHA-256: {report['sha256']}\n")
+          print(json.dumps(report,ensure_ascii=False))
+          PY
+      - name: Extract embedded subtitle tracks when present
+        run: |
+          python - <<'PY'
+          import json,subprocess,pathlib
+          p=json.load(open("output/source_probe.json",encoding="utf-8"))
+          subs=[s for s in p.get("streams",[]) if s.get("codec_type")=="subtitle"]
+          root=pathlib.Path("output/subtitles")
+          for n,s in enumerate(subs):
+              dest=root/f"subtitle_{n:02d}_stream_{s['index']}.srt"
+              r=subprocess.run(["ffmpeg","-y","-v","error","-i","work/source/episode.mkv","-map",f"0:s:{n}","-c:s","srt",str(dest)],capture_output=True,text=True)
+              if r.returncode==0 and dest.exists() and dest.stat().st_size:
+                  print(f"SUBTITLE_EXTRACTED {dest.name} bytes={dest.stat().st_size}")
+              else:
+                  print(f"SUBTITLE_NOT_EXPORTABLE stream={s['index']} codec={s.get('codec_name')}")
+          if not subs: print("NO_EMBEDDED_SUBTITLE_STREAMS")
+          PY
+      - name: Extract short reference audio and visual contact sheet
+        run: |
+          set -euo pipefail
+          ffmpeg -y -v error -ss 0 -i work/source/episode.mkv -t 45 -map 0:a:0 -ac 1 -ar 16000 output/audio_sample_45s.wav
+          python - <<'PY'
+          import json,subprocess,pathlib
+          p=json.load(open("output/preflight.json",encoding="utf-8"))
+          d=float(p["duration_seconds"])
+          times=sorted(set([0.5, d*0.1, d*0.25, d*0.5, d*0.75, max(0.5,d-2)]))
+          root=pathlib.Path("output/frames")
+          for i,t in enumerate(times):
+              dest=root/f"frame_{i:02d}_{int(t):06d}s.jpg"
+              subprocess.run(["ffmpeg","-y","-v","error","-ss",str(t),"-i","work/source/episode.mkv","-frames:v","1","-q:v","3",str(dest)],check=True,timeout=90)
+              print(dest.name)
+          PY
+      - name: Upload source analysis package
+        uses: actions/upload-artifact@v4
+        with:
+          name: episode-drive-preflight-${{ github.run_id }}
+          path: |
+            output/
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 6
