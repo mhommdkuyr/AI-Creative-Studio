@@ -49,7 +49,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p work/source output/frames output/subtitles
-          gdown --fuzzy "$SOURCE_URL" --output work/source/episode.mkv --continue
+          gdown "$SOURCE_URL" --output work/source/episode.mkv --continue
           test -s work/source/episode.mkv
           echo "download_bytes=$(stat -c%s work/source/episode.mkv)" >> "$GITHUB_OUTPUT"
       - name: Probe video and enumerate subtitle streams
