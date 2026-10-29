@@ -40,8 +40,8 @@ def make_clip(source, start, end, dest, target_duration=None, max_atempo=1.45):
     if abs(atempo-1.0)>0.015: filters.append(f"atempo={atempo:.5f}")
     filters += [f"apad=pad_dur={max(0.0,target_duration-raw_dur/atempo):.3f}"]
     filt=",".join(filters)
-    run(["ffmpeg","-y","-v","error","-ss",f"{float(start):.4f}","-i",str(source),
-         "-t",f"{raw_dur:.4f}","-af",filt,"-ac","2","-ar",str(OUT_SR),
+    run(["ffmpeg","-y","-v","error","-ss",f"{float(start):.4f}","-t",f"{raw_dur:.4f}","-i",str(source),
+         "-af",filt,"-ac","2","-ar",str(OUT_SR),
          "-c:a","pcm_s16le",str(dest)],timeout=240)
     actual=duration(dest)
     return actual,atempo
