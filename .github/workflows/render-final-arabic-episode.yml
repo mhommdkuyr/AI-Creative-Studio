@@ -44,7 +44,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ffmpeg
           python -m pip install --upgrade pip
-          python -m pip install "numpy<2" soundfile "demucs>=4.0.1"
+          python -m pip install "numpy<2" soundfile gdown "demucs>=4.0.1"
       - name: Download original episode and existing Arabic character voice masters
         run: |
           set -euo pipefail
