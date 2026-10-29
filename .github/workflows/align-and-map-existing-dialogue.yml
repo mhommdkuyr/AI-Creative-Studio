@@ -2,6 +2,12 @@ name: Align existing character dialogue and map Chinese source utterances
 
 on:
   workflow_dispatch:
+    inputs:
+      analysis_run_id:
+        description: "Successful analysis workflow run ID whose artifact contains the ten Arabic transcripts"
+        required: true
+        type: string
+        default: "40970048521"
   workflow_run:
     workflows:
       - Analyze episode dialogue and existing Arabic voice tracks
@@ -33,14 +39,13 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Restore completed analysis checkpoint
-        id: cache
-        uses: actions/cache/restore@v4
+      - name: Download completed analysis artifact
+        uses: actions/download-artifact@v4
         with:
-          path: work/analysis/
-          key: dialogue-alignment-${{ github.run_id }}
-          restore-keys: |
-            episode-existing-voices-small-
+          name: episode-existing-voice-analysis-${{ github.event_name == 'workflow_run' && github.event.workflow_run.id || inputs.analysis_run_id }}
+          path: work
+          run-id: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.id || inputs.analysis_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
       - name: Verify the source and ten Arabic transcript checkpoints
         run: |
           set -euo pipefail
