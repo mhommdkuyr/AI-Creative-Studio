@@ -134,16 +134,28 @@ def main():
             if u.get("track_start_seconds") is None or u.get("track_end_seconds") is None: continue
             lines[(sid,int(u["utterance_index"]))]={**u,"voice_path":voice_path,"text":u["text"]}
     assignments=source_map.get("assignments",[])
-    # De-duplicate one script utterance if ASR produced multiple consecutive fragments for it.
-    selected={}
+    # Merge neighboring ASR fragments that Gemini mapped to the same spoken Arabic utterance.
+    grouped={}
     for a in assignments:
         sid=a.get("speaker_script_id","unmatched"); ui=int(a.get("utterance_index",0) or 0)
         conf=float(a.get("confidence",0) or 0)
         if sid=="unmatched" or conf<args.min_confidence or (sid,ui) not in lines: continue
-        key=(sid,ui)
-        prev=selected.get(key)
-        if prev is None or conf>float(prev.get("confidence",0)):
-            selected[key]=a
+        grouped.setdefault((sid,ui),[]).append(a)
+    selected={}
+    for key,items in grouped.items():
+        items=sorted(items,key=lambda x:float(x["source_start"]))
+        runs=[]
+        for item in items:
+            if not runs or float(item["source_start"])-float(runs[-1][-1]["source_end"])>6.0:
+                runs.append([item])
+            else:
+                runs[-1].append(item)
+        best=max(runs,key=lambda run:(sum(float(x.get("confidence",0)) for x in run),float(run[-1]["source_end"])-float(run[0]["source_start"])))
+        representative=max(best,key=lambda x:float(x.get("confidence",0))).copy()
+        representative["source_start"]=min(float(x["source_start"]) for x in best)
+        representative["source_end"]=max(float(x["source_end"]) for x in best)
+        representative["merged_source_segment_indices"]=[int(x["source_segment_index"]) for x in best]
+        selected[key]=representative
     clips_dir=out/"arabic_line_clips"; clips_dir.mkdir(parents=True,exist_ok=True)
     segments=[]; report=[]
     for n,(key,a) in enumerate(sorted(selected.items(),key=lambda kv:float(kv[1]["source_start"]))):
