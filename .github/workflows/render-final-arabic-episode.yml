@@ -75,16 +75,49 @@ jobs:
           set -euo pipefail
           ffmpeg -y -v error -i work/source/episode.mkv -map 0:a:0 -vn -ac 2 -ar 44100 -c:a pcm_s16le work/source/episode_44k_stereo.wav
           test -s work/source/episode_44k_stereo.wav
-      - name: Separate original dialogue from background music and effects
+      - name: Separate original dialogue and background in resumable five-minute chunks
         env:
           OMP_NUM_THREADS: "2"
           MKL_NUM_THREADS: "2"
         run: |
           set -euo pipefail
-          python -m demucs -n mdx_q --two-stems=vocals --device cpu --shifts 1 --overlap 0.1 --out work/separated work/source/episode_44k_stereo.wav
-          test -s work/separated/mdx_q/episode_44k_stereo/no_vocals.wav
-          test -s work/separated/mdx_q/episode_44k_stereo/vocals.wav
+          mkdir -p work/source/chunks work/separated
+          ffmpeg -y -v error -i work/source/episode_44k_stereo.wav -f segment -segment_time 300 -reset_timestamps 1 -c:a pcm_s16le work/source/chunks/chunk_%03d.wav
+          chunk_count="$(find work/source/chunks -maxdepth 1 -type f -name 'chunk_*.wav' | wc -l)"
+          test "$chunk_count" -gt 0
+          echo "Prepared $chunk_count audio chunks for bounded-memory separation"
+          for chunk in work/source/chunks/chunk_*.wav; do
+            name="$(basename "$chunk" .wav)"
+            output_dir="work/separated/mdx_q/$name"
+            if [ -s "$output_dir/no_vocals.wav" ] && [ -s "$output_dir/vocals.wav" ]; then
+              echo "Reusing completed separation for $name"
+              continue
+            fi
+            python -m demucs -n mdx_q --two-stems=vocals --device cpu --shifts 1 --overlap 0.1 --out work/separated "$chunk"
+            test -s "$output_dir/no_vocals.wav"
+            test -s "$output_dir/vocals.wav"
+            echo "Separated $name successfully"
+          done
+          mkdir -p work/separated/mdx_q/episode_44k_stereo
+          for stem in no_vocals vocals; do
+            concat_list="work/separated/${stem}_concat.txt"
+            : > "$concat_list"
+            for chunk in work/source/chunks/chunk_*.wav; do
+              name="$(basename "$chunk" .wav)"
+              printf "file '%s/mdx_q/%s/%s.wav'\\n" "$PWD/work/separated" "$name" "$stem" >> "$concat_list"
+            done
+            ffmpeg -y -v error -f concat -safe 0 -i "$concat_list" -c:a pcm_s16le "work/separated/mdx_q/episode_44k_stereo/$stem.wav"
+            test -s "work/separated/mdx_q/episode_44k_stereo/$stem.wav"
+          done
           ffprobe -v error -show_entries format=duration,size -of json work/separated/mdx_q/episode_44k_stereo/no_vocals.wav > work/render/background_probe.json
+          python - <<'PY'
+          import json
+          p=json.load(open("work/render/background_probe.json",encoding="utf-8"))
+          duration=float(p["format"]["duration"])
+          if duration < 6000:
+              raise SystemExit(f"Separated background is truncated: {duration:.2f}s")
+          print(json.dumps({"background_duration_seconds":duration,"size":p["format"]["size"]}))
+          PY
       - name: Build Arabic dialogue timeline using only the ten existing voice masters
         run: |
           set -euo pipefail
