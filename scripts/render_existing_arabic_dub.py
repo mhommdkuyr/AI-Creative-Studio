@@ -204,7 +204,7 @@ def main():
     probe=json.loads(run(["ffprobe","-v","error","-show_format","-show_streams","-of","json",str(final_video)],timeout=120).stdout)
     if not any(s.get("codec_type")=="video" for s in probe.get("streams",[])): raise RuntimeError("Final file has no video stream")
     if not any(s.get("codec_type")=="audio" for s in probe.get("streams",[])): raise RuntimeError("Final file has no audio stream")
-    vol=run(["ffmpeg","-hide_banner","-i",str(final_video),"-af","volumedetect","-f","null","-"],timeout=300).stderr
+    vol=run(["ffmpeg","-hide_banner","-i",str(final_video),"-map","0:a:0","-vn","-af","volumedetect","-f","null","-"],timeout=1800).stderr
     m=re.search(r"max_volume:\s*(-?\d+(?:\.\d+)?) dB",vol)
     if not m or float(m.group(1))<-55: raise RuntimeError("Final mix is silent or invalid")
     make_srt(assignments,lines,scripts,out/"الحلقة_مدبلجة_ترجمة_مرجعية.srt")
