@@ -8,6 +8,11 @@ on:
         required: true
         type: string
         default: "40970048521"
+      checkpoint_run_id:
+        description: "Optional previous alignment run ID containing a resumable semantic mapping checkpoint"
+        required: false
+        type: string
+        default: ""
   workflow_run:
     workflows:
       - Analyze episode dialogue and existing Arabic voice tracks
@@ -46,6 +51,20 @@ jobs:
           path: work
           run-id: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.id || inputs.analysis_run_id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Download prior semantic mapping checkpoint when provided
+        if: github.event_name == 'workflow_dispatch' && inputs.checkpoint_run_id != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: episode-dialogue-alignment-checkpoint-${{ inputs.checkpoint_run_id }}
+          path: work/checkpoint
+          run-id: ${{ inputs.checkpoint_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Restore resumable semantic mapping state
+        if: github.event_name == 'workflow_dispatch' && inputs.checkpoint_run_id != ''
+        run: |
+          if [ -s work/checkpoint/source_to_arabic_lines.json.partial.json ]; then
+            cp work/checkpoint/source_to_arabic_lines.json.partial.json work/analysis/source_to_arabic_lines.json.partial.json
+          fi
       - name: Verify the source and ten Arabic transcript checkpoints
         run: |
           set -euo pipefail
@@ -70,9 +89,20 @@ jobs:
             --source-speakers work/analysis/source_speakers.json \
             --speaker-scripts work/analysis/speaker_scripts.json \
             --out work/analysis/source_to_arabic_lines.json \
-            --model gemini-3.8-flash \
-            --batch-size 300 \
-            --max-output-tokens 16384
+            --model gemini-3.6-flash \
+            --batch-size 30 \
+            --max-output-tokens 4096
+      - name: Preserve resumable alignment checkpoint
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: episode-dialogue-alignment-checkpoint-${{ github.run_id }}
+          path: |
+            work/analysis/voice_line_timing.json
+            work/analysis/source_to_arabic_lines.json.partial.json
+          if-no-files-found: warn
+          retention-days: 30
+          compression-level: 6
       - name: Upload alignment and semantic mapping reports
         uses: actions/upload-artifact@v4
         with:
