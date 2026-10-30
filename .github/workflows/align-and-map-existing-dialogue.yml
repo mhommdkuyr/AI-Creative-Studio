@@ -90,8 +90,8 @@ jobs:
             --speaker-scripts work/analysis/speaker_scripts.json \
             --out work/analysis/source_to_arabic_lines.json \
             --model gemini-3.6-flash \
-            --batch-size 30 \
-            --max-output-tokens 4096
+            --batch-size 6 \
+            --max-output-tokens 8192
       - name: Preserve resumable alignment checkpoint
         if: always()
         uses: actions/upload-artifact@v4
