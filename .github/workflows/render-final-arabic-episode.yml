@@ -75,14 +75,14 @@ jobs:
           set -euo pipefail
           ffmpeg -y -v error -i work/source/episode.mkv -map 0:a:0 -vn -ac 2 -ar 44100 -c:a pcm_s16le work/source/episode_44k_stereo.wav
           test -s work/source/episode_44k_stereo.wav
-      - name: Separate original dialogue and background in resumable five-minute chunks
+      - name: Separate original dialogue and background in resumable thirty-second chunks
         env:
           OMP_NUM_THREADS: "2"
           MKL_NUM_THREADS: "2"
         run: |
           set -euo pipefail
           mkdir -p work/source/chunks work/separated
-          ffmpeg -y -v error -i work/source/episode_44k_stereo.wav -f segment -segment_time 300 -reset_timestamps 1 -c:a pcm_s16le work/source/chunks/chunk_%03d.wav
+          ffmpeg -y -v error -i work/source/episode_44k_stereo.wav -f segment -segment_time 30 -reset_timestamps 1 -c:a pcm_s16le work/source/chunks/chunk_%03d.wav
           chunk_count="$(find work/source/chunks -maxdepth 1 -type f -name 'chunk_*.wav' | wc -l)"
           test "$chunk_count" -gt 0
           echo "Prepared $chunk_count audio chunks for bounded-memory separation"
