@@ -5,8 +5,8 @@ import argparse, hashlib, json, os, re, time, urllib.request, urllib.error
 from pathlib import Path
 
 TAG=re.compile(r"<[^<>]+>")
-BRACKET=re.compile(r"\\[[^\\]]*\\]")
-SPLIT=re.compile(r"\\s*\\.\\.\\.\\s*")
+BRACKET=re.compile(r"\[[^\]]*\]")
+SPLIT=re.compile(r"\s*\.\.\.\s*")
 
 def utterances(speaker):
     out=[]
@@ -97,9 +97,9 @@ def main():
     ap.add_argument("--source-speakers",required=True)
     ap.add_argument("--speaker-scripts",required=True)
     ap.add_argument("--out",required=True)
-    ap.add_argument("--model",default="gemini-3.8-flash")
-    ap.add_argument("--batch-size",type=int,default=300)
-    ap.add_argument("--max-output-tokens",type=int,default=16384)
+    ap.add_argument("--model",default="gemini-3.6-flash")
+    ap.add_argument("--batch-size",type=int,default=30)
+    ap.add_argument("--max-output-tokens",type=int,default=4096)
     args=ap.parse_args()
     source=json.loads(Path(args.source_speakers).read_text(encoding="utf-8"))
     scripts=json.loads(Path(args.speaker_scripts).read_text(encoding="utf-8"))
