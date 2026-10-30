@@ -13,6 +13,10 @@ on:
       - Align existing character dialogue and map Chinese source utterances
     types: [completed]
     branches: [main]
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/render-final-arabic-episode.yml"
 
 permissions:
   contents: read
@@ -24,7 +28,7 @@ concurrency:
 
 jobs:
   render:
-    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') || github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 360
     steps:
@@ -38,9 +42,9 @@ jobs:
       - name: Download validated source-to-voice alignment package
         uses: actions/download-artifact@v4
         with:
-          name: episode-dialogue-alignment-${{ github.event_name == 'workflow_dispatch' && inputs.alignment_run_id || github.event.workflow_run.id }}
+          name: episode-dialogue-alignment-${{ github.event_name == 'workflow_dispatch' && inputs.alignment_run_id || github.event_name == 'workflow_run' && github.event.workflow_run.id || '41076254808' }}
           path: work/analysis
-          run-id: ${{ github.event_name == 'workflow_dispatch' && inputs.alignment_run_id || github.event.workflow_run.id }}
+          run-id: ${{ github.event_name == 'workflow_dispatch' && inputs.alignment_run_id || github.event_name == 'workflow_run' && github.event.workflow_run.id || '41076254808' }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
       - uses: actions/setup-python@v5
         with:
