@@ -13,6 +13,16 @@ on:
         required: false
         type: string
         default: ""
+      model:
+        description: "Gemini model used for structured Chinese-to-Arabic alignment"
+        required: false
+        type: string
+        default: "gemini-3.5-flash-lite"
+      batch_size:
+        description: "Source utterances per Gemini request"
+        required: false
+        type: string
+        default: "15"
   workflow_run:
     workflows:
       - Analyze episode dialogue and existing Arabic voice tracks
@@ -89,8 +99,8 @@ jobs:
             --source-speakers work/analysis/source_speakers.json \
             --speaker-scripts work/analysis/speaker_scripts.json \
             --out work/analysis/source_to_arabic_lines.json \
-            --model gemini-3.6-flash \
-            --batch-size 6 \
+            --model "${{ github.event_name == 'workflow_dispatch' && inputs.model || 'gemini-3.5-flash-lite' }}" \
+            --batch-size "${{ github.event_name == 'workflow_dispatch' && inputs.batch_size || '15' }}" \
             --max-output-tokens 8192
       - name: Preserve resumable alignment checkpoint
         if: always()
