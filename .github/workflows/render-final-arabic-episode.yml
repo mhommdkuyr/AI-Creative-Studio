@@ -7,7 +7,7 @@ on:
         description: "Successful alignment workflow run ID containing the validated dialogue mapping artifact"
         required: true
         type: string
-        default: "41046015175"
+        default: "41076254808"
   workflow_run:
     workflows:
       - Align existing character dialogue and map Chinese source utterances
@@ -162,3 +162,20 @@ jobs:
           if-no-files-found: error
           retention-days: 30
           compression-level: 1
+
+      - name: Preserve recoverable render output when a later step fails
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: final-arabic-dubbed-episode-recovery-${{ github.run_id }}
+          path: |
+            work/render/الحلقة_مدبلجة_بالعربية.mkv
+            work/render/arabic_dialogue_plus_music.wav
+            work/render/arabic_dialogue_timeline.wav
+            work/render/render_manifest.json
+            work/render/final_probe.json
+            work/analysis/source_to_arabic_lines.json
+            work/analysis/voice_line_timing.json
+          if-no-files-found: ignore
+          retention-days: 30
+          compression-level: 0
