@@ -34,8 +34,8 @@ def main() -> int:
 
     try:
         from faster_whisper import WhisperModel
-    except ImportError as exc:
-        raise SystemExit("Install faster-whisper before running this CPU alignment audit.") from exc
+    except Exception as exc:
+        raise SystemExit(f"Could not import faster-whisper: {type(exc).__name__}: {exc}") from exc
 
     voice_dir = Path(args.voice_dir)
     out_dir = Path(args.out_dir)
