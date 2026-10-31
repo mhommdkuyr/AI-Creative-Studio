@@ -4,13 +4,22 @@ on:
   push:
     branches: [main, integration-mvp-1, commercial-ai-editor-foundation, anime-animation-studio]
   pull_request:
+  workflow_dispatch:
+    inputs:
+      run_live_provider_tests:
+        description: "Opt in to live Gemini API calls; may consume API quota"
+        required: false
+        type: boolean
+        default: false
 
 jobs:
   api:
     runs-on: ubuntu-latest
     env:
-      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-      GEMINI_API_KEY_2: ${{ secrets.GEMINI_API_KEY_2 }}
+      # Keep routine PR/push CI deterministic and avoid consuming provider quota.
+      # Live Gemini checks are opt-in through workflow_dispatch only.
+      GEMINI_API_KEY: ${{ github.event_name == 'workflow_dispatch' && inputs.run_live_provider_tests && secrets.GEMINI_API_KEY || '' }}
+      GEMINI_API_KEY_2: ${{ github.event_name == 'workflow_dispatch' && inputs.run_live_provider_tests && secrets.GEMINI_API_KEY_2 || '' }}
       GEMINI_MODEL: gemini-3.5-flash-lite
       GEMINI_FALLBACK_MODEL: gemini-3.6-flash
     steps:
