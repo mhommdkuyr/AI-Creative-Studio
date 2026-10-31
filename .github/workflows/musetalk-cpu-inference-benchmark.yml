@@ -29,10 +29,12 @@ jobs:
       OMP_NUM_THREADS: "4"
       MKL_NUM_THREADS: "4"
       OPENBLAS_NUM_THREADS: "4"
-      HF_HOME: ${{ runner.temp }}/hf-asr-cache
       HF_HUB_DISABLE_TELEMETRY: "1"
     steps:
       - uses: actions/checkout@v4
+
+      - name: Set Hugging Face cache directory
+        run: echo "HF_HOME=$RUNNER_TEMP/hf-asr-cache" >> "$GITHUB_ENV"
 
       - uses: actions/setup-python@v5
         with:
@@ -137,10 +139,12 @@ jobs:
           PY
 
       - name: Upload conservative alignment audit
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: musetalk-voice-alignment-audit-${{ github.run_id }}
           path: |
+            work/voice_asr_v2/*.json
             work/voice_asr_v2/voice_asr_manifest.json
             work/voice_line_timing_v2.json
             work/render_manifest_v2.json
@@ -158,10 +162,12 @@ jobs:
       OMP_NUM_THREADS: "4"
       MKL_NUM_THREADS: "4"
       OPENBLAS_NUM_THREADS: "4"
-      HF_HOME: ${{ runner.temp }}/hf-model-cache
       HF_HUB_DISABLE_TELEMETRY: "1"
     steps:
       - uses: actions/checkout@v4
+
+      - name: Set Hugging Face cache directory
+        run: echo "HF_HOME=$RUNNER_TEMP/hf-model-cache" >> "$GITHUB_ENV"
 
       - uses: actions/setup-python@v5
         with:
@@ -355,7 +361,7 @@ jobs:
           OUTPUT="work/results/v15/pilot_lipsynced.mp4"
           test -s "$OUTPUT"
           test -s "$OUTPUT.done"
-          ffprobe -v error -show_format -show_streams -of json "$OUTPUT" > work/pilot_probe.json
+          ffprobe -v error -count_frames -show_format -show_streams -of json "$OUTPUT" > work/pilot_probe.json
           ffmpeg -v error -i "$OUTPUT" -f null -
           ffmpeg -y -v error -i "$OUTPUT" -vf "fps=1/2,scale=240:-1,tile=6x1" -frames:v 1 work/pilot_contact_sheet.jpg
           python - <<'PY'
