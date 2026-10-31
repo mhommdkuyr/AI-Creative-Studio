@@ -304,13 +304,13 @@ jobs:
           ],check=True)
           config={
             "task_0":{
-              "video_path":"work/pilot_input.mp4",
-              "audio_path":"work/pilot_audio.wav",
+              "video_path":"../pilot_input.mp4",
+              "audio_path":"../pilot_audio.wav",
               "result_name":"pilot_lipsynced.mp4"
             }
           }
           Path("work/musetalk_batch.yaml").write_text(
-            "task_0:\n  video_path: work/pilot_input.mp4\n  audio_path: work/pilot_audio.wav\n  result_name: pilot_lipsynced.mp4\n",
+            "task_0:\n  video_path: ../pilot_input.mp4\n  audio_path: ../pilot_audio.wav\n  result_name: pilot_lipsynced.mp4\n",
             encoding="utf-8"
           )
           print(json.dumps({"sample_duration_seconds":round(duration,3),"voice_duration_seconds":round(raw,3),"atempo":atempo,"voice_master":first["voice_master"]},ensure_ascii=False))
@@ -359,6 +359,10 @@ jobs:
           set -euo pipefail
           python scripts/patch_musetalk_resumable.py work/MuseTalk/scripts/inference.py
           cd work/MuseTalk
+          test -s ../pilot_input.mp4
+          test -s ../pilot_audio.wav
+          ffprobe -v error -show_entries format=duration -of csv=p=0 ../pilot_input.mp4
+          ffprobe -v error -show_entries format=duration -of csv=p=0 ../pilot_audio.wav
           /usr/bin/time -v -o ../cpu-inference.time \
             python -m scripts.inference \
               --inference_config ../musetalk_batch.yaml \
