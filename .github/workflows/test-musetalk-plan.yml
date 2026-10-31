@@ -1,6 +1,9 @@
 name: MuseTalk candidate planner tests
 
 on:
+  pull_request:
+    branches:
+      - main
   push:
     branches:
       - fix/srt-cue-dedup-and-sync-audit
