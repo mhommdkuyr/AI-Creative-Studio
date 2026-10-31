@@ -1,0 +1,92 @@
+name: CPU-first FFmpeg feasibility benchmark
+
+on:
+  push:
+    branches:
+      - fix/srt-cue-dedup-and-sync-audit
+    paths:
+      - .github/workflows/cpu-first-media-benchmark.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cpu-media-benchmark-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  ffmpeg-cpu-benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Record runner and FFmpeg capabilities
+        run: |
+          mkdir -p benchmark
+          { uname -a; nproc; free -h; df -h .; ffmpeg -version | head -n 3; ffmpeg -encoders 2>/dev/null | grep -E 'libx264|aac' | head; } | tee benchmark/runner.txt
+
+      - name: Generate deterministic 20-second video and dialogue-like audio
+        run: |
+          ffmpeg -hide_banner -y \
+            -f lavfi -i "testsrc2=size=640x360:rate=24:duration=20" \
+            -f lavfi -i "sine=frequency=440:sample_rate=48000:duration=20" \
+            -map 0:v:0 -map 1:a:0 -c:v libx264 -preset ultrafast -pix_fmt yuv420p \
+            -c:a aac -b:a 128k -shortest benchmark/source.mp4
+
+      - name: Split into resumable-style bounded chunks
+        run: |
+          set -euo pipefail
+          for i in 0 1 2 3; do
+            start=$((i * 5))
+            /usr/bin/time -v -o "benchmark/chunk_${i}.time" \
+              ffmpeg -hide_banner -y -ss "$start" -i benchmark/source.mp4 -t 5 \
+                -map 0:v:0 -map 0:a:0 -c:v libx264 -preset ultrafast -pix_fmt yuv420p \
+                -c:a aac -b:a 128k -avoid_negative_ts make_zero "benchmark/chunk_${i}.mp4"
+            ffprobe -v error -show_entries format=duration -of csv=p=0 "benchmark/chunk_${i}.mp4"
+          done
+          printf "file 'chunk_0.mp4'\nfile 'chunk_1.mp4'\nfile 'chunk_2.mp4'\nfile 'chunk_3.mp4'\n" > benchmark/concat.txt
+
+      - name: Reassemble and verify duration, streams and decodability
+        run: |
+          set -euo pipefail
+          cd benchmark
+          /usr/bin/time -v -o assembly.time ffmpeg -hide_banner -y -f concat -safe 0 -i concat.txt \
+            -map 0:v:0 -map 0:a:0 -c:v libx264 -preset ultrafast -pix_fmt yuv420p \
+            -c:a aac -b:a 128k final.mp4
+          duration=$(ffprobe -v error -show_entries format=duration -of csv=p=0 final.mp4)
+          python - "$duration" <<'PY'
+          import sys
+          d=float(sys.argv[1])
+          assert abs(d-20.0) <= 0.35, f"unexpected duration: {d}"
+          print(f"PASS: assembled duration={d:.3f}s")
+          PY
+          ffprobe -v error -select_streams v:0 -show_entries stream=codec_name,width,height -of json final.mp4 | tee video_stream.json
+          ffprobe -v error -select_streams a:0 -show_entries stream=codec_name,sample_rate,channels -of json final.mp4 | tee audio_stream.json
+          ffmpeg -v error -i final.mp4 -f null -
+          test -s final.mp4
+          {
+            echo "## CPU media benchmark"
+            echo "- Test input: synthetic 20-second 640x360@24fps + 48kHz audio"
+            echo "- Reassembly duration: ${duration}s"
+            echo "- This validates FFmpeg chunk/mux/decode mechanics only; it does NOT run a lip-sync inference model or prove full-episode feasibility."
+            echo
+            echo "### Runner"
+            cat runner.txt
+            echo "### Assembly timing"
+            cat assembly.time
+          } > benchmark-report.md
+          cat benchmark-report.md
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cpu-first-ffmpeg-benchmark
+          path: |
+            benchmark/runner.txt
+            benchmark/benchmark-report.md
+            benchmark/assembly.time
+            benchmark/final.mp4
+            benchmark/video_stream.json
+            benchmark/audio_stream.json
+          retention-days: 14
