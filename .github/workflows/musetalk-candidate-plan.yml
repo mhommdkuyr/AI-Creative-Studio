@@ -1,0 +1,52 @@
+name: Build verified MuseTalk candidate plan
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - fix/srt-cue-dedup-and-sync-audit
+    paths:
+      - scripts/prepare_musetalk_candidates.py
+      - .github/workflows/musetalk-candidate-plan.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: musetalk-candidate-plan-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install tiny downloader
+        run: pip install gdown
+      - name: Download compact verified render report from Drive
+        run: python -c "import gdown; gdown.download(id='1mVJpaVrR0Y9ikfeX_lynBCVwDBoUemxV', output='render_reports.zip', quiet=False)"
+      - name: Extract report
+        run: unzip -o render_reports.zip -d render_reports
+      - name: Build conservative 8-second candidate plan
+        run: python scripts/prepare_musetalk_candidates.py --render-manifest render_reports/render_manifest.json --output artifacts/lipsync_candidates.json --min-confidence 0.80 --min-coverage 0.70 --min-audio-fit 0.75 --max-audio-fit 1.25 --max-clip-seconds 8
+      - name: Enforce expected source and budget summary
+        run: |
+          python - <<'PY'
+          import json
+          p=json.load(open('artifacts/lipsync_candidates.json'))
+          s=p['summary']
+          assert abs(float(p['video_duration_seconds'])-6153.995) < 1.0, p['video_duration_seconds']
+          assert s['safe_lines'] == 41, s
+          assert s['clips'] == 100, s
+          assert s['safe_dialogue_seconds'] < 700, s
+          print(json.dumps({'summary':s,'pilot_clip_id':p['pilot_clip_id']},indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: verified-musetalk-candidate-plan
+          path: artifacts/lipsync_candidates.json
+          retention-days: 14
