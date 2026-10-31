@@ -1,6 +1,9 @@
 name: Build verified MuseTalk candidate plan
 
 on:
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
   push:
     branches:
