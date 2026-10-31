@@ -10,19 +10,27 @@ on:
       - scripts/retranscribe_voice_masters.py
       - scripts/merge_voice_alignment_audit.py
       - scripts/prepare_musetalk_candidates.py
+      - scripts/align_dub_lines.py
       - scripts/patch_musetalk_resumable.py
   workflow_dispatch:
+    inputs:
+      run_voice_alignment_audit:
+        description: Re-run ASR and rebuild Arabic word alignment for all ten masters
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
   actions: read
 
 concurrency:
-  group: musetalk-cpu-feasibility-${{ github.ref }}
+  group: musetalk-cpu-feasibility-${{ github.ref }}-${{ github.sha }}
   cancel-in-progress: false
 
 jobs:
   voice-alignment-audit:
+    if: ${{ (github.event_name == 'workflow_dispatch' && inputs.run_voice_alignment_audit) || (github.event_name == 'push' && (contains(github.event.head_commit.modified, 'scripts/retranscribe_voice_masters.py') || contains(github.event.head_commit.modified, 'scripts/align_dub_lines.py') || contains(github.event.head_commit.modified, 'scripts/merge_voice_alignment_audit.py') || contains(github.event.head_commit.modified, 'scripts/prepare_musetalk_candidates.py'))) }}
     runs-on: ubuntu-latest
     timeout-minutes: 180
     env:
