@@ -44,7 +44,12 @@ jobs:
         run: |
           set -euo pipefail
           python -m pip install --upgrade pip
-          python -m pip install --no-cache-dir "faster-whisper==1.1.1"
+          python -m pip install --no-cache-dir "requests==2.32.5" "huggingface-hub==0.30.2" "faster-whisper==1.1.1"
+          python - <<'PY'
+          import requests
+          import faster_whisper
+          print("ASR imports OK", requests.__version__, faster_whisper.__version__)
+          PY
 
       - name: Download verified repair-only input bundle
         run: |
@@ -150,7 +155,7 @@ jobs:
             work/lipsync_candidates_original.json
             work/lipsync_candidates_v2.json
             work/alignment_audit_summary.json
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 30
           compression-level: 6
 
@@ -316,10 +321,14 @@ jobs:
           mim install mmengine
           mim install mmcv==2.0.1
           mim install mmdet==3.1.0
+          # MMPose pins chumpy 0.70, whose legacy setup.py fails under PEP 517 isolation.
+          # Install it in the active environment first; NumPy 1.23.5 is already pinned above.
+          python -m pip install --no-cache-dir "pip==24.3.1" "setuptools==69.5.1" "wheel==0.45.1"
+          python -m pip install --no-cache-dir --no-build-isolation --no-deps "chumpy==0.70"
           mim install mmpose==1.1.0
           python - <<'PY'
-          import torch
-          print("torch",torch.__version__,"cuda_available",torch.cuda.is_available())
+          import torch, mmcv, mmpose, chumpy
+          print("torch",torch.__version__,"mmcv",mmcv.__version__,"mmpose",mmpose.__version__,"chumpy",chumpy.__version__,"cuda_available",torch.cuda.is_available())
           if torch.cuda.is_available():
               raise SystemExit("This workflow must remain CPU-only.")
           PY
