@@ -83,24 +83,30 @@ def mix_voice_timeline(segments, audio_duration, chunks_dir, out_audio):
     run(["ffmpeg","-y","-v","error","-f","concat","-safe","0","-i",str(concat),
          "-ar",str(OUT_SR),"-ac","2","-c:a","pcm_s16le",str(out_audio)],timeout=1800)
 
-def make_srt(assignments, timing_lookup, scripts, out_path):
-    id_to_script={s["id"]:s for s in scripts["speakers"]}
+def make_srt(selected_lines, timing_lookup, out_path):
+    """Write one subtitle cue per rendered speaker utterance, not per ASR fragment."""
     def ts(v):
         ms=max(0,int(round(float(v)*1000)))
         h,ms=divmod(ms,3600000); m,ms=divmod(ms,60000); sec,ms=divmod(ms,1000)
         return f"{h:02d}:{m:02d}:{sec:02d},{ms:03d}"
     rows=[]
-    for a in assignments:
-        sid=a["speaker_script_id"]; ui=int(a["utterance_index"])
-        if sid=="unmatched" or (sid,ui) not in timing_lookup: continue
-        start=float(a["source_start"]); end=float(a["source_end"])
-        text=timing_lookup[(sid,ui)]["text"]
+    for (sid,ui),assignment in selected_lines.items():
+        if (sid,ui) not in timing_lookup:
+            continue
+        start=float(assignment.get("source_start",0))
+        end=float(assignment.get("source_end",0))
+        if not (math.isfinite(start) and math.isfinite(end)) or end<=start:
+            continue
+        text=str(timing_lookup[(sid,ui)].get("text","")).strip()
+        if not text:
+            continue
         rows.append((start,end,text))
-    rows.sort(key=lambda x:x[0])
+    rows.sort(key=lambda x:(x[0],x[1],x[2]))
     out=[]
     for i,(st,en,text) in enumerate(rows,1):
         out.extend([str(i),f"{ts(st)} --> {ts(max(st+0.2,en))}",text,""])
     Path(out_path).write_text("\n".join(out),encoding="utf-8")
+    return len(rows)
 
 def main():
     ap=argparse.ArgumentParser()
@@ -157,7 +163,7 @@ def main():
         representative["merged_source_segment_indices"]=[int(x["source_segment_index"]) for x in best]
         selected[key]=representative
     clips_dir=out/"arabic_line_clips"; clips_dir.mkdir(parents=True,exist_ok=True)
-    segments=[]; report=[]
+    segments=[]; report=[]; rendered_selected={}
     for n,(key,a) in enumerate(sorted(selected.items(),key=lambda kv:float(kv[1]["source_start"]))):
         sid,ui=key; line=lines[key]
         word_coverage=float(line.get("word_alignment_coverage",0) or 0)
@@ -172,6 +178,7 @@ def main():
         clip=clips_dir/f"{n:05d}_{sid}_{ui:03d}.wav"
         fitted_duration,atempo=make_clip(line["voice_path"],raw_start,raw_end,clip,target,args.max_atempo)
         segments.append({"wav":clip,"start":src_start,"duration":fitted_duration})
+        rendered_selected[key]=a
         report.append({
           "source_segment_index":a["source_segment_index"],"source_start":src_start,"source_end":src_end,
           "speaker_script_id":sid,"utterance_index":ui,"confidence":float(a["confidence"]),
@@ -207,7 +214,10 @@ def main():
     vol=run(["ffmpeg","-hide_banner","-i",str(final_video),"-map","0:a:0","-vn","-af","volumedetect","-f","null","-"],timeout=1800).stderr
     m=re.search(r"max_volume:\s*(-?\d+(?:\.\d+)?) dB",vol)
     if not m or float(m.group(1))<-55: raise RuntimeError("Final mix is silent or invalid")
-    make_srt(assignments,lines,scripts,out/"الحلقة_مدبلجة_ترجمة_مرجعية.srt")
+    subtitle_cue_count=make_srt(rendered_selected,lines,out/"الحلقة_مدبلجة_ترجمة_مرجعية.srt")
+    timing_overrun_count=sum(1 for x in report if x["timing_overrun"])
+    expected_utterance_count=sum(int(track.get("expected_utterance_count",len(track.get("utterances",[])))) for track in timing.get("tracks",[]))
+    sync_review_required=(timing_overrun_count>0 or len(segments)<expected_utterance_count)
     manifest={
       "status":"DUBBED_VIDEO_RENDERED_AND_VERIFIED",
       "video_file":final_video.name,"video_bytes":final_video.stat().st_size,
@@ -215,7 +225,12 @@ def main():
       "source_video_sha256":sha256(video),"matched_line_count":len(segments),
       "source_assignments_count":len(assignments),"unmatched_assignments":source_map.get("unmatched_count"),
       "low_confidence_assignments":source_map.get("low_confidence_count"),
-      "timing_overrun_count":sum(1 for x in report if x["timing_overrun"]),
+      "expected_utterance_count":expected_utterance_count,
+      "rendered_utterance_count":len(segments),
+      "subtitle_cue_count":subtitle_cue_count,
+      "timing_overrun_count":timing_overrun_count,
+      "sync_quality_status":"review_required" if sync_review_required else "no_timing_overruns_detected",
+      "visual_lip_sync_status":"not_performed_video_stream_copied",
       "background_method":"Demucs two-stem separation; original vocals excluded; no_vocals bed retained",
       "video_codec":"original video stream copied losslessly; audio replaced with Arabic+background AAC",
       "audio_peak_db":float(m.group(1)),

@@ -1,0 +1,32 @@
+name: Arabic subtitle regression checks
+
+on:
+  push:
+    branches:
+      - fix/srt-cue-dedup-and-sync-audit
+    paths:
+      - scripts/render_existing_arabic_dub.py
+      - tests/test_render_existing_arabic_dub.py
+      - .github/workflows/test-arabic-srt-fix.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: arabic-subtitle-regression-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Compile renderer without processing media
+        run: python -m py_compile scripts/render_existing_arabic_dub.py
+      - name: Run subtitle regression tests
+        run: python -m unittest discover -s tests -v

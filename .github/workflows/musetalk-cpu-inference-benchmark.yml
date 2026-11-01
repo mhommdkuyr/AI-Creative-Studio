@@ -1,0 +1,484 @@
+name: MuseTalk v1.5 CPU feasibility and voice-alignment audit
+
+on:
+  push:
+    branches:
+      - fix/srt-cue-dedup-and-sync-audit
+    paths:
+      - .github/workflows/musetalk-cpu-inference-benchmark.yml
+      - scripts/download_musetalk_v15_minimal.sh
+      - scripts/retranscribe_voice_masters.py
+      - scripts/merge_voice_alignment_audit.py
+      - scripts/prepare_musetalk_candidates.py
+      - scripts/align_dub_lines.py
+      - scripts/patch_musetalk_resumable.py
+  workflow_dispatch:
+    inputs:
+      run_voice_alignment_audit:
+        description: Re-run ASR and rebuild Arabic word alignment for all ten masters
+        type: boolean
+        required: false
+        default: false
+      run_cpu_pilot:
+        description: Explicitly run the expensive CPU MuseTalk pilot (about 2 hours on the last hosted runner)
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: musetalk-cpu-feasibility-${{ github.ref }}-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  voice-alignment-audit:
+    if: ${{ (github.event_name == 'workflow_dispatch' && inputs.run_voice_alignment_audit) || (github.event_name == 'push' && (contains(github.event.head_commit.modified, 'scripts/retranscribe_voice_masters.py') || contains(github.event.head_commit.modified, 'scripts/align_dub_lines.py') || contains(github.event.head_commit.modified, 'scripts/merge_voice_alignment_audit.py') || contains(github.event.head_commit.modified, 'scripts/prepare_musetalk_candidates.py'))) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      OMP_NUM_THREADS: "4"
+      MKL_NUM_THREADS: "4"
+      OPENBLAS_NUM_THREADS: "4"
+      HF_HUB_DISABLE_TELEMETRY: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set Hugging Face cache directory
+        run: echo "HF_HOME=$RUNNER_TEMP/hf-asr-cache" >> "$GITHUB_ENV"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install CPU ASR dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install --no-cache-dir "requests==2.32.5" "huggingface-hub==0.30.2" "faster-whisper==1.1.1"
+          python - <<'PY'
+          import requests
+          import faster_whisper
+          print("ASR imports OK", requests.__version__, faster_whisper.__version__)
+          PY
+
+      - name: Download verified repair-only input bundle
+        run: |
+          set -euo pipefail
+          mkdir -p work
+          curl --fail --location --retry 4 --retry-delay 3 \
+            "https://github.com/mhommdkuyr/AI-Creative-Studio/releases/download/arabic-dub-assets-2026-10-31/arabic_dub_lipsync_repair_inputs.zip" \
+            --output work/repair_inputs.zip
+          test "$(stat -c%s work/repair_inputs.zip)" -eq 98588348
+          python - <<'PY'
+          import json, zipfile, hashlib
+          from pathlib import Path
+          root=Path("work/repair_inputs")
+          with zipfile.ZipFile("work/repair_inputs.zip") as z:
+              z.extractall(root)
+          source=json.loads((root/"source"/"source_manifest.json").read_text(encoding="utf-8"))
+          expected=source["voice_track_sha256_manifest"]
+          checked=0
+          for name,digest in expected.items():
+              path=root/"voice_masters"/name
+              if not path.is_file():
+                  raise SystemExit(f"Missing voice master: {name}")
+              h=hashlib.sha256(path.read_bytes()).hexdigest()
+              if h != digest:
+                  raise SystemExit(f"Voice master SHA mismatch: {name}")
+              checked += 1
+          if checked != 10:
+              raise SystemExit(f"Expected 10 voice hashes, verified {checked}")
+          alignment=root/"alignment"
+          for archive,target in [
+              (alignment/"alignment_checkpoint.zip",alignment/"checkpoint"),
+              (alignment/"render_reports.zip",alignment/"render_reports"),
+          ]:
+              with zipfile.ZipFile(archive) as z:
+                  z.extractall(target)
+          print(json.dumps({
+              "verified_voice_masters":checked,
+              "source_duration_seconds":source["source_duration_seconds"],
+              "checkpoint_files":len(list((alignment/"checkpoint").rglob("*"))),
+              "render_manifest_exists":(alignment/"render_reports"/"render_manifest.json").is_file()
+          }))
+          PY
+
+      - name: Re-transcribe existing Arabic masters with large-v3-turbo on CPU
+        run: |
+          set -euo pipefail
+          python scripts/retranscribe_voice_masters.py \
+            --voice-dir work/repair_inputs/voice_masters \
+            --out-dir work/voice_asr_v2 \
+            --model large-v3-turbo \
+            --cpu-threads 4
+
+      - name: Re-align Arabic script words without changing the rendered audio timeline
+        run: |
+          set -euo pipefail
+          python scripts/align_dub_lines.py \
+            --speakers-json work/repair_inputs/alignment/checkpoint/speaker_scripts.json \
+            --voice-asr-dir work/voice_asr_v2 \
+            --out work/voice_line_timing_v2.json
+          python scripts/merge_voice_alignment_audit.py \
+            --render-manifest work/repair_inputs/alignment/render_reports/render_manifest.json \
+            --voice-line-timing work/voice_line_timing_v2.json \
+            --output work/render_manifest_v2.json \
+            --model large-v3-turbo \
+            --boundary-tolerance 0.35
+          python scripts/prepare_musetalk_candidates.py \
+            --render-manifest work/repair_inputs/alignment/render_reports/render_manifest.json \
+            --output work/lipsync_candidates_original.json
+          python scripts/prepare_musetalk_candidates.py \
+            --render-manifest work/render_manifest_v2.json \
+            --output work/lipsync_candidates_v2.json
+          python - <<'PY'
+          import json
+          old=json.load(open("work/lipsync_candidates_original.json",encoding="utf-8"))
+          new=json.load(open("work/lipsync_candidates_v2.json",encoding="utf-8"))
+          audit=json.load(open("work/render_manifest_v2.json",encoding="utf-8"))["alignment_audit"]
+          summary={
+            "asr_model":"large-v3-turbo",
+            "old_safe_lines":old["summary"]["safe_lines"],
+            "new_safe_lines":new["summary"]["safe_lines"],
+            "old_clips":old["summary"]["clips"],
+            "new_clips":new["summary"]["clips"],
+            "old_safe_dialogue_seconds":old["summary"]["safe_dialogue_seconds"],
+            "new_safe_dialogue_seconds":new["summary"]["safe_dialogue_seconds"],
+            "accepted_coverage_improvements":audit["improved_lines"],
+            "unchanged_or_rejected_lines":audit["unchanged_or_rejected_lines"],
+            "audio_timing_changed":False
+          }
+          json.dump(summary,open("work/alignment_audit_summary.json","w",encoding="utf-8"),ensure_ascii=False,indent=2)
+          print(json.dumps(summary,ensure_ascii=False,indent=2))
+          PY
+
+      - name: Upload conservative alignment audit
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: musetalk-voice-alignment-audit-${{ github.run_id }}
+          path: |
+            work/voice_asr_v2/*.json
+            work/voice_asr_v2/voice_asr_manifest.json
+            work/voice_line_timing_v2.json
+            work/render_manifest_v2.json
+            work/lipsync_candidates_original.json
+            work/lipsync_candidates_v2.json
+            work/alignment_audit_summary.json
+          if-no-files-found: warn
+          retention-days: 30
+          compression-level: 6
+
+  cpu-inference-pilot:
+    # MuseTalk CPU inference is very slow (last 11.775s pilot took 7,266s).
+    # Never spend hosted-runner minutes automatically on push; require explicit dispatch opt-in.
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_cpu_pilot }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      OMP_NUM_THREADS: "4"
+      MKL_NUM_THREADS: "4"
+      OPENBLAS_NUM_THREADS: "4"
+      HF_HUB_DISABLE_TELEMETRY: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set Hugging Face cache directory
+        run: echo "HF_HOME=$RUNNER_TEMP/hf-model-cache" >> "$GITHUB_ENV"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install FFmpeg and archive tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg unzip
+
+      - name: Record actual hosted runner resources
+        run: |
+          {
+            echo "UTC: $(date -u +%FT%TZ)"
+            echo "Runner: $RUNNER_OS / $RUNNER_ARCH"
+            echo "CPU threads: $(nproc)"
+            lscpu | head -n 20
+            free -h
+            df -h .
+            if command -v nvidia-smi >/dev/null 2>&1; then nvidia-smi; else echo "No NVIDIA GPU visible to this job; CPU-only run."; fi
+          } | tee work-runner.txt
+
+      - name: Download the previously verified full dubbed base video artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: final-arabic-dubbed-episode-41119346692
+          path: work/base_artifact
+          run-id: 41119346692
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download repair bundle and verify exact base video and voice masters
+        run: |
+          set -euo pipefail
+          mkdir -p work
+          BASE="$(find work/base_artifact -type f -name '*.mkv' -print -quit)"
+          test -n "$BASE"
+          cp "$BASE" work/base_dubbed.mkv
+          actual_sha="$(sha256sum work/base_dubbed.mkv | cut -d' ' -f1)"
+          test "$actual_sha" = "85efc3b6130a411789d27a622244cec75845dca4b0923b9a9048cd2e1235a087"
+          duration="$(ffprobe -v error -show_entries format=duration -of csv=p=0 work/base_dubbed.mkv)"
+          python - "$duration" <<'PY'
+          import sys
+          d=float(sys.argv[1])
+          if abs(d-6153.995)>0.5:
+              raise SystemExit(f"Wrong base video duration: {d}")
+          print(f"Verified base video: {d:.3f}s")
+          PY
+          curl --fail --location --retry 4 --retry-delay 3 \
+            "https://github.com/mhommdkuyr/AI-Creative-Studio/releases/download/arabic-dub-assets-2026-10-31/arabic_dub_lipsync_repair_inputs.zip" \
+            --output work/repair_inputs.zip
+          python - <<'PY'
+          import json,zipfile,hashlib
+          from pathlib import Path
+          root=Path("work/repair_inputs")
+          with zipfile.ZipFile("work/repair_inputs.zip") as z:
+              z.extractall(root)
+          source=json.loads((root/"source"/"source_manifest.json").read_text(encoding="utf-8"))
+          checked=0
+          for name,digest in source["voice_track_sha256_manifest"].items():
+              path=root/"voice_masters"/name
+              if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest()!=digest:
+                  raise SystemExit(f"Voice master hash mismatch: {name}")
+              checked+=1
+          if checked!=10:
+              raise SystemExit(f"Expected 10 voice masters, found {checked}")
+          alignment=root/"alignment"
+          for archive,target in [
+              (alignment/"alignment_checkpoint.zip",alignment/"checkpoint"),
+              (alignment/"render_reports.zip",alignment/"render_reports"),
+          ]:
+              with zipfile.ZipFile(archive) as z:
+                  z.extractall(target)
+          print(json.dumps({"base_sha256":"85efc3b6130a411789d27a622244cec75845dca4b0923b9a9048cd2e1235a087","base_duration":float(6153.995),"voice_masters_verified":checked}))
+          PY
+          python scripts/prepare_musetalk_candidates.py \
+            --render-manifest work/repair_inputs/alignment/render_reports/render_manifest.json \
+            --output work/lipsync_candidates.json
+          python - <<'PY'
+          import json
+          p=json.load(open("work/lipsync_candidates.json",encoding="utf-8"))
+          if p["base_dub_video_sha256"]!="85efc3b6130a411789d27a622244cec75845dca4b0923b9a9048cd2e1235a087":
+              raise SystemExit("Candidate plan does not match the verified base dubbed video.")
+          pilot=next(c for c in p["clips"] if c["clip_id"]==p["pilot_clip_id"])
+          group=sorted([c for c in p["clips"] if c["line_id"]==pilot["line_id"]],key=lambda c:c["chunk_index"])
+          if len(group)<2:
+              raise SystemExit("Pilot utterance does not provide a continuous 10-second sample.")
+          if abs(float(group[0]["source_end"])-float(group[1]["source_start"]))>0.01:
+              raise SystemExit("Pilot video chunks are not contiguous.")
+          if abs(float(group[0]["voice_end"])-float(group[1]["voice_start"]))>0.01:
+              raise SystemExit("Pilot voice chunks are not contiguous.")
+          print(json.dumps({"pilot_line_id":pilot["line_id"],"pilot_chunks":len(group),"sample_seconds":round(float(group[-1]["source_end"])-float(group[0]["source_start"]),3),"speaker":pilot["speaker_script_id"],"coverage":pilot["word_alignment_coverage"]},ensure_ascii=False))
+          PY
+
+      - name: Prepare continuous 10–20 second pilot from the exact matching voice master
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json,subprocess
+          from pathlib import Path
+          p=json.load(open("work/lipsync_candidates.json",encoding="utf-8"))
+          first=next(c for c in p["clips"] if c["clip_id"]==p["pilot_clip_id"])
+          group=sorted([c for c in p["clips"] if c["line_id"]==first["line_id"]],key=lambda c:c["chunk_index"])
+          start=float(group[0]["source_start"]); end=float(group[-1]["source_end"])
+          voice_start=float(group[0]["voice_start"]); voice_end=float(group[-1]["voice_end"])
+          atempo=float(group[0]["atempo"]); duration=end-start; raw=voice_end-voice_start
+          if duration<10 or duration>20:
+              raise SystemExit(f"Pilot sample must be 10–20 seconds, got {duration:.3f}")
+          if any(abs(float(c["atempo"])-atempo)>0.001 for c in group):
+              raise SystemExit("Pilot chunks have inconsistent atempo values.")
+          voice=Path("work/repair_inputs/voice_masters")/first["voice_master"]
+          subprocess.run([
+            "ffmpeg","-y","-v","error","-ss",f"{start:.3f}","-i","work/base_dubbed.mkv",
+            "-t",f"{duration:.3f}","-an","-vf","fps=25","-c:v","libx264","-preset","ultrafast",
+            "-crf","22","-pix_fmt","yuv420p","work/pilot_input.mp4"
+          ],check=True)
+          audio_filter=f"atempo={atempo:.5f},apad,atrim=duration={duration:.3f}"
+          subprocess.run([
+            "ffmpeg","-y","-v","error","-ss",f"{voice_start:.3f}","-i",str(voice),
+            "-t",f"{raw:.3f}","-af",audio_filter,"-ac","1","-ar","16000",
+            "-c:a","pcm_s16le","work/pilot_audio.wav"
+          ],check=True)
+          config={
+            "task_0":{
+              "video_path":"../pilot_input.mp4",
+              "audio_path":"../pilot_audio.wav",
+              "result_name":"pilot_lipsynced.mp4"
+            }
+          }
+          Path("work/musetalk_batch.yaml").write_text(
+            "task_0:\n  video_path: ../pilot_input.mp4\n  audio_path: ../pilot_audio.wav\n  result_name: pilot_lipsynced.mp4\n",
+            encoding="utf-8"
+          )
+          print(json.dumps({"sample_duration_seconds":round(duration,3),"voice_duration_seconds":round(raw,3),"atempo":atempo,"voice_master":first["voice_master"]},ensure_ascii=False))
+          PY
+
+      - name: Install CPU PyTorch and MuseTalk inference dependencies
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install --no-cache-dir torch==2.0.1 torchvision==0.15.2 --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install --no-cache-dir \
+            "numpy==1.23.5" "opencv-python==4.9.0.80" "soundfile==0.12.1" \
+            "diffusers==0.30.2" "accelerate==0.28.0" "transformers==4.39.2" \
+            "huggingface_hub[cli,hf_xet]==0.30.2" "librosa==0.11.0" "einops==0.8.1" \
+            omegaconf ffmpeg-python tqdm face-alignment==1.4.1 openmim gdown
+          mim install mmengine
+          mim install mmcv==2.0.1
+          mim install mmdet==3.1.0
+          # MMPose pins chumpy 0.70, whose legacy setup.py fails under PEP 517 isolation.
+          # Install it in the active environment first; NumPy 1.23.5 is already pinned above.
+          python -m pip install --no-cache-dir "pip==24.3.1" "setuptools==69.5.1" "wheel==0.45.1"
+          python -m pip install --no-cache-dir --no-build-isolation --no-deps "chumpy==0.70"
+          mim install mmpose==1.1.0
+          python - <<'PY'
+          import torch, mmcv, mmpose, chumpy
+          print("torch",torch.__version__,"mmcv",mmcv.__version__,"mmpose",mmpose.__version__,"chumpy",chumpy.__version__,"cuda_available",torch.cuda.is_available())
+          if torch.cuda.is_available():
+              raise SystemExit("This workflow must remain CPU-only.")
+          PY
+
+      - name: Clone upstream MuseTalk and download licensed v1.5 inference weights
+        run: |
+          set -euo pipefail
+          git clone --depth 1 https://github.com/TMElyralab/MuseTalk.git work/MuseTalk
+          MUSETALK_ROOT="$GITHUB_WORKSPACE/work/MuseTalk" bash scripts/download_musetalk_v15_minimal.sh
+          test -s work/MuseTalk/models/musetalkV15/unet.pth
+          test -s work/MuseTalk/models/musetalkV15/musetalk.json
+          test -s work/MuseTalk/models/sd-vae/diffusion_pytorch_model.bin
+          test -s work/MuseTalk/models/whisper/pytorch_model.bin
+          test -s work/MuseTalk/models/dwpose/dw-ll_ucoco_384.pth
+          test -s work/MuseTalk/models/face-parse-bisent/79999_iter.pth
+          df -h . | tee work/disk-after-weights.txt
+
+      - name: Patch inference for resumable timing and run genuine CPU lip-sync inference
+        run: |
+          set -euo pipefail
+          python scripts/patch_musetalk_resumable.py work/MuseTalk/scripts/inference.py
+          cd work/MuseTalk
+          test -s ../pilot_input.mp4
+          test -s ../pilot_audio.wav
+          ffprobe -v error -show_entries format=duration -of csv=p=0 ../pilot_input.mp4
+          ffprobe -v error -show_entries format=duration -of csv=p=0 ../pilot_audio.wav
+          /usr/bin/time -v -o ../cpu-inference.time \
+            python -m scripts.inference \
+              --inference_config ../musetalk_batch.yaml \
+              --result_dir ../results \
+              --unet_model_path models/musetalkV15/unet.pth \
+              --unet_config models/musetalkV15/musetalk.json \
+              --version v15 --gpu_id 0 --batch_size 1 \
+              --ffmpeg_path /usr/bin/ffmpeg \
+              --saved_coord --use_saved_coord \
+              --max_runtime_seconds 9900
+
+      - name: Verify pilot duration, streams and full decode; measure CPU throughput
+        run: |
+          set -euo pipefail
+          OUTPUT="work/results/v15/pilot_lipsynced.mp4"
+          test -s "$OUTPUT"
+          test -s "$OUTPUT.done"
+          ffprobe -v error -count_frames -show_format -show_streams -of json "$OUTPUT" > work/pilot_probe.json
+          ffmpeg -v error -i "$OUTPUT" -f null -
+          ffmpeg -y -v error -i "$OUTPUT" -vf "fps=1/2,scale=240:-1,tile=6x1" -frames:v 1 work/pilot_contact_sheet.jpg
+          python - <<'PY'
+          import json,re,pathlib,subprocess
+          probe=json.load(open("work/pilot_probe.json",encoding="utf-8"))
+          fmt=probe["format"]
+          video=next((s for s in probe["streams"] if s.get("codec_type")=="video"),None)
+          audio=next((s for s in probe["streams"] if s.get("codec_type")=="audio"),None)
+          if not video or not audio:
+              raise SystemExit("Pilot output is missing video or audio.")
+          duration=float(fmt.get("duration") or 0)
+          if not 10 <= duration <= 21:
+              raise SystemExit(f"Unexpected pilot duration: {duration}")
+          timing=pathlib.Path("work/cpu-inference.time").read_text(encoding="utf-8",errors="replace")
+          elapsed_match=re.search(r"Elapsed \(wall clock\) time \(h:mm:ss or m:ss\):\s*([0-9:.]+)",timing)
+          rss_match=re.search(r"Maximum resident set size \(kbytes\):\s*(\d+)",timing)
+          def seconds(value):
+              parts=value.split(":")
+              if len(parts)==3: return int(parts[0])*3600+int(parts[1])*60+float(parts[2])
+              if len(parts)==2: return int(parts[0])*60+float(parts[1])
+              return float(parts[0])
+          elapsed=seconds(elapsed_match.group(1)) if elapsed_match else None
+          rss=int(rss_match.group(1)) if rss_match else None
+          frames=int(video.get("nb_read_frames") or 0)
+          report={
+            "status":"CPU_MUSETALK_PILOT_VERIFIED",
+            "device":"CPU",
+            "model":"TMElyralab/MuseTalk v1.5",
+            "sample_duration_seconds":round(duration,3),
+            "video_codec":video.get("codec_name"),
+            "audio_codec":audio.get("codec_name"),
+            "width":video.get("width"),
+            "height":video.get("height"),
+            "frames":frames,
+            "wall_seconds":round(elapsed,1) if elapsed is not None else None,
+            "peak_rss_mb":round(rss/1024,1) if rss is not None else None,
+            "generated_fps":round(frames/elapsed,3) if frames and elapsed else None,
+            "real_time_factor":round(elapsed/duration,2) if elapsed else None,
+            "decode_check":"passed"
+          }
+          pathlib.Path("work/cpu-inference-report.json").write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding="utf-8")
+          print(json.dumps(report,ensure_ascii=False,indent=2))
+          PY
+
+      - name: Read-only Google Drive destination access preflight
+        continue-on-error: true
+        env:
+          GOOGLE_DRIVE_CREDENTIALS: ${{ secrets.GOOGLE_DRIVE_CREDENTIALS }}
+          GOOGLE_DRIVE_FOLDER_ID: "1SE3JYbB4c-pC1W-ymRK6S5CsFt-XidzA"
+        run: |
+          set -euo pipefail
+          if [ -z "$GOOGLE_DRIVE_CREDENTIALS" ]; then
+            echo "GOOGLE_DRIVE_CREDENTIALS secret is not configured; no Drive operation was attempted."
+            exit 0
+          fi
+          python -m pip install --no-cache-dir google-api-python-client google-auth
+          python - <<'PY'
+          import json,os
+          from google.oauth2 import service_account
+          from googleapiclient.discovery import build
+          info=json.loads(os.environ["GOOGLE_DRIVE_CREDENTIALS"])
+          if info.get("type")!="service_account":
+              raise SystemExit("GOOGLE_DRIVE_CREDENTIALS is not a service-account JSON document.")
+          credentials=service_account.Credentials.from_service_account_info(
+              info,scopes=["https://www.googleapis.com/auth/drive.file"])
+          service=build("drive","v3",credentials=credentials,cache_discovery=False)
+          folder=service.files().get(
+              fileId=os.environ["GOOGLE_DRIVE_FOLDER_ID"],
+              fields="id,name,mimeType"
+          ).execute(num_retries=3)
+          if folder.get("mimeType")!="application/vnd.google-apps.folder":
+              raise SystemExit("Configured Drive destination is not a folder.")
+          print("Drive destination read access verified; no file was created or modified.")
+          PY
+
+      - name: Upload CPU pilot report and review sample
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: musetalk-cpu-pilot-${{ github.run_id }}
+          path: |
+            work/cpu-inference-report.json
+            work/cpu-inference.time
+            work/pilot_probe.json
+            work/pilot_contact_sheet.jpg
+            work/results/v15/pilot_lipsynced.mp4
+            work/results/v15/pilot_lipsynced.mp4.done
+            work/lipsync_candidates.json
+            work-runner.txt
+            work/disk-after-weights.txt
+          if-no-files-found: warn
+          retention-days: 14
+          compression-level: 1

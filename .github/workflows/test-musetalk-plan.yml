@@ -1,0 +1,41 @@
+name: MuseTalk candidate planner tests
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - fix/srt-cue-dedup-and-sync-audit
+    paths:
+      - scripts/prepare_musetalk_candidates.py
+      - scripts/assemble_musetalk_overlays.py
+      - scripts/patch_musetalk_resumable.py
+      - scripts/download_musetalk_v15_minimal.sh
+      - notebooks/musetalk_lipsync_colab.ipynb
+      - tests/test_prepare_musetalk_candidates.py
+      - tests/test_assemble_musetalk_overlays.py
+      - tests/test_patch_musetalk_resumable.py
+      - .github/workflows/test-musetalk-plan.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: musetalk-plan-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Compile helper scripts
+        run: python -m py_compile scripts/prepare_musetalk_candidates.py scripts/assemble_musetalk_overlays.py scripts/patch_musetalk_resumable.py
+      - name: Run unit tests
+        run: python -m unittest discover -s tests -v
