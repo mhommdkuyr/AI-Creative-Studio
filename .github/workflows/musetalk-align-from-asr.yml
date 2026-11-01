@@ -1,0 +1,142 @@
+name: Rebuild MuseTalk alignment from completed CPU ASR
+
+on:
+  push:
+    branches:
+      - fix/srt-cue-dedup-and-sync-audit
+    paths:
+      - .github/workflows/musetalk-align-from-asr.yml
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: musetalk-align-from-asr-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  rebuild-alignment:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download the completed ten-master CPU ASR artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: musetalk-voice-alignment-audit-41253523544
+          run-id: 41253523544
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: work/asr_artifact
+
+      - name: Download and inspect verified repair bundle
+        run: |
+          set -euo pipefail
+          mkdir -p work/repair_inputs
+          curl --fail --location --retry 4 --retry-delay 3 \
+            "https://github.com/mhommdkuyr/AI-Creative-Studio/releases/download/arabic-dub-assets-2026-10-31/arabic_dub_lipsync_repair_inputs.zip" \
+            --output work/repair_inputs.zip
+          test "$(stat -c%s work/repair_inputs.zip)" -eq 98588348
+          python - <<'PY'
+          import json, zipfile
+          from pathlib import Path
+          root=Path("work/repair_inputs")
+          with zipfile.ZipFile("work/repair_inputs.zip") as z:
+              z.extractall(root)
+          alignment=root/"alignment"
+          for archive,target in [
+              (alignment/"alignment_checkpoint.zip",alignment/"checkpoint"),
+              (alignment/"render_reports.zip",alignment/"render_reports"),
+          ]:
+              with zipfile.ZipFile(archive) as z:
+                  z.extractall(target)
+          candidates=[]
+          for path in root.rglob("*.json"):
+              try:
+                  data=json.loads(path.read_text(encoding="utf-8"))
+              except Exception:
+                  continue
+              if isinstance(data,dict) and isinstance(data.get("speakers"),list) and data["speakers"]:
+                  candidates.append((path,len(data["speakers"])))
+          print("speaker-script candidates:",[(str(p),n) for p,n in candidates])
+          preferred=[(p,n) for p,n in candidates if p.name.lower() in {"speaker_scripts.json","speaker_script.json","speakers.json"}]
+          selected=preferred if preferred else candidates
+          if len(selected)!=1:
+              raise SystemExit("Could not uniquely locate the 10-speaker script; inspect candidate list above.")
+          path,count=selected[0]
+          if count!=10:
+              raise SystemExit(f"Expected 10 speaker scripts, found {count} in {path}")
+          manifest=alignment/"render_reports"/"render_manifest.json"
+          if not manifest.is_file():
+              raise SystemExit(f"Missing render manifest: {manifest}")
+          asr=Path("work/asr_artifact/voice_asr_v2")
+          asr_files=list(asr.glob("*.json"))
+          if len([p for p in asr_files if p.name!="voice_asr_manifest.json"])!=10:
+              raise SystemExit(f"Expected 10 ASR track JSONs in {asr}; found {len(asr_files)}")
+          Path("work/speaker_script_path.txt").write_text(str(path),encoding="utf-8")
+          print(json.dumps({"speaker_script":str(path),"speakers":count,"asr_track_jsons":10,"render_manifest":str(manifest)},ensure_ascii=False))
+          PY
+
+      - name: Align all existing Arabic words to the supplied speaker scripts
+        run: |
+          set -euo pipefail
+          SPEAKERS="$(cat work/speaker_script_path.txt)"
+          python scripts/align_dub_lines.py \
+            --speakers-json "$SPEAKERS" \
+            --voice-asr-dir work/asr_artifact/voice_asr_v2 \
+            --out work/voice_line_timing_v2.json
+          python scripts/merge_voice_alignment_audit.py \
+            --render-manifest work/repair_inputs/alignment/render_reports/render_manifest.json \
+            --voice-line-timing work/voice_line_timing_v2.json \
+            --output work/render_manifest_v2.json \
+            --model large-v3-turbo \
+            --boundary-tolerance 0.35
+          python scripts/prepare_musetalk_candidates.py \
+            --render-manifest work/repair_inputs/alignment/render_reports/render_manifest.json \
+            --output work/lipsync_candidates_original.json
+          python scripts/prepare_musetalk_candidates.py \
+            --render-manifest work/render_manifest_v2.json \
+            --output work/lipsync_candidates_v2.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          old=json.loads(Path("work/lipsync_candidates_original.json").read_text(encoding="utf-8"))
+          new=json.loads(Path("work/lipsync_candidates_v2.json").read_text(encoding="utf-8"))
+          merged=json.loads(Path("work/render_manifest_v2.json").read_text(encoding="utf-8"))
+          timing=json.loads(Path("work/voice_line_timing_v2.json").read_text(encoding="utf-8"))
+          summary={
+            "asr_model":"large-v3-turbo",
+            "asr_tracks":len(timing.get("tracks",[])),
+            "old_rendered_lines":old["summary"]["rendered_lines"],
+            "new_rendered_lines":new["summary"]["rendered_lines"],
+            "old_safe_lines":old["summary"]["safe_lines"],
+            "new_safe_lines":new["summary"]["safe_lines"],
+            "old_clips":old["summary"]["clips"],
+            "new_clips":new["summary"]["clips"],
+            "old_safe_dialogue_seconds":old["summary"]["safe_dialogue_seconds"],
+            "new_safe_dialogue_seconds":new["summary"]["safe_dialogue_seconds"],
+            "accepted_coverage_improvements":merged["alignment_audit"]["improved_lines"],
+            "unchanged_or_rejected_lines":merged["alignment_audit"]["unchanged_or_rejected_lines"],
+            "audio_timing_changed":False,
+            "speaker_timing_boundaries_changed":False
+          }
+          Path("work/alignment_audit_summary.json").write_text(json.dumps(summary,ensure_ascii=False,indent=2),encoding="utf-8")
+          print(json.dumps(summary,ensure_ascii=False,indent=2))
+          PY
+
+      - name: Upload alignment audit artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: musetalk-alignment-rebuild-${{ github.run_id }}
+          path: |
+            work/speaker_script_path.txt
+            work/voice_line_timing_v2.json
+            work/render_manifest_v2.json
+            work/lipsync_candidates_original.json
+            work/lipsync_candidates_v2.json
+            work/alignment_audit_summary.json
+          if-no-files-found: warn
+          retention-days: 30
+          compression-level: 6
