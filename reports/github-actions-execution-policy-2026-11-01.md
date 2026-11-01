@@ -66,3 +66,20 @@
   - `integrated-mvp-ci` run `41282384099`: both web and API jobs succeeded, including API regression.
 - The current commit's Vercel status was pending at the last check; this is separate from the completed successful GitHub Actions jobs.
 - No CPU inference, final MP4 mux, full-length decode, visual/phonetic lip-sync review, or Drive upload was performed. No Colab notebook was opened or executed.
+
+
+## Latest PR-head verification — 2026-11-01 (branch head 59b4b32b65a9a2816196364c9399ba8f0df1a2e5)
+
+- PR #10 remains open and mergeable; latest branch head at inspection: `59b4b32b65a9a2816196364c9399ba8f0df1a2e5`.
+- The latest PR Actions runs associated with this head completed successfully:
+  - Candidate planner tests: run `41282453986`, job `124776962876`; Python compilation passed and all 11/11 unit tests passed.
+  - Candidate plan: run `41282453991`, job `124776962755`; downloaded the compact render report, rebuilt the conservative plan and passed the source/duration/budget assertions.
+  - Integrated CI: run `41282454014`; API and web jobs both succeeded.
+  - Cloudflare edge CI: run `41282454069`; validation/build and Wrangler dry-run succeeded.
+- The verified plan artifact is `13074196062`, `verified-musetalk-candidate-plan`, 5,462 bytes; ZIP SHA-256 `b73db5fe951e4c44c559945c1f3909f99dea2134b89e95a54d5ae3d634874680`. Its JSON records the exact base-dub SHA-256 `85efc3b6130a411789d27a622244cec75845dca4b0923b9a9048cd2e1235a087` and duration 6,153.995 seconds.
+- Candidate coverage remains limited: 152 rendered lines audited; 43 eligible before overlap filtering; 41 safe lines; 100 clips; 629.534 seconds of dialogue (10.23% of episode runtime). Exclusions: 6 low-confidence, 45 low-coverage, 46 timing-overrun, 12 voice-duration mismatch, and 2 cross-speaker overlaps. This is a candidate plan only, not rendered lip-sync.
+- Assembly-code review confirms the overlay script maps audio and subtitle streams from input 0 and copies them; it does not mux MuseTalk-generated audio. It refuses missing planned clips unless the explicit `--allow-partial` flag is used. Its existing tests cover graph offsets/chaining, not full-episode mux/decode or phonetic lip-sync accuracy.
+- The expensive CPU MuseTalk pilot remains gated behind explicit manual dispatch; no new inference was started in this verification. The prior measured rate still makes full-episode inference impractical on the available CPU runner.
+- The latest combined commit status contains a failing `Vercel` deployment context. This is separate from the successful GitHub Actions tests/builds above and was not changed in this dubbing-only pass.
+- No final full-length MP4 is present in the latest run artifacts; the only MuseTalk-specific artifact from this head is the 5,462-byte JSON candidate plan. No final mux, complete MP4 decode, visual/phonetic review, or Drive upload occurred. No Colab notebook was opened or executed; source video, voice masters and checkpoints remain untouched.
+- Blocking requirement remains an already-authorized connected GPU runner within existing permitted limits, or a separately benchmarked materially faster inference backend. Do not use paid compute without explicit approval; do not upload pilot/partial output.
