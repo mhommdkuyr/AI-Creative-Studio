@@ -30,3 +30,27 @@
 ## Next step
 - Run lightweight validation for the updated workflow YAML and continue candidate-plan/alignment regression checks.
 - Do not trigger MuseTalk CPU inference again unless explicitly required for a narrowly scoped diagnostic; it is already proven too slow for full production.
+
+
+## Follow-up verification — 2026-11-01 (PR head 3aa16f0125cbb231ee2fb98fbfdc981a5ba2c2fa)
+
+### Latest GitHub Actions results
+- PR #10 remains open and mergeable; head is still `3aa16f0125cbb231ee2fb98fbfdc981a5ba2c2fa`.
+- Candidate planner run `41278429682`: success. It rebuilt the plan from the verified render report and uploaded only the JSON plan as artifact `13072147463` (5,462 bytes; SHA-256 `771879e2a7fc082be012ae4fd575b1f872ac22d43a9cc9d4e0739484c8cbfe86`).
+- Planner result: 152 rendered lines; 43 eligible before overlap filtering; 41 safe lines; 100 clips; 629.534 seconds of safe dialogue (~10.23% of 6,153.995 seconds). Exclusions: 6 low-confidence, 45 low-coverage, 46 timing-overrun, 12 audio-duration mismatch, 2 cross-speaker overlap.
+- Python test run `41278429608`: success; 11/11 unit tests passed, including overlay graph offsets/chaining, voice-boundary preservation, resumable marker behavior, candidate filtering, and Arabic subtitle cue generation.
+- `cloudflare-edge-ci` run `41278429673` and `integrated-mvp-ci` run `41278429610`: success.
+- Push run `41278412177` completed with both `cpu-inference-pilot` and `voice-alignment-audit` skipped. This confirms the expensive CPU pilot is not started automatically after an ordinary push.
+- The latest Actions checks are green. A separate commit status context named `Vercel` is `failure` (deployment failure; target URL is in the commit status). This is not a MuseTalk inference or test failure and was not modified in this dubbing-only pass.
+
+### Safe mux code audit
+- `scripts/assemble_musetalk_overlays.py` maps video from the overlay graph while mapping audio and subtitle streams from input `0` (the verified Arabic-dubbed base), with `-c:a copy` and `-c:s copy`. MuseTalk clip audio is not muxed.
+- The assembly script refuses to assemble when planned clips are missing unless `--allow-partial` is explicitly supplied. No partial flag was used and no mux/render was launched in this pass.
+- The existing unit tests cover graph timing/overlay chaining, but they do not constitute a full-length MP4 mux/decode or a visual/phonetic lip-sync review.
+
+### Limits and disposition
+- The latest candidate plan covers 629.534 seconds of dialogue only, not the full episode dialogue. It is a conservative candidate plan, not a completed dub.
+- No new MuseTalk inference was run: the previously measured CPU rate (0.0405 fps / 617.07x real-time) makes the full episode impractical on the available GitHub-hosted CPU runner.
+- No final MP4 was produced. No file was uploaded to the destination Drive folder, and no source video, voice master, or checkpoint was deleted or replaced.
+- The PR includes `notebooks/musetalk_lipsync_colab.ipynb`, but this pass did not open or execute it; all checks above ran through GitHub Actions only.
+- Required next capability: an already-authorized, connected GPU runner within existing permitted limits, or a materially faster backend benchmarked on the same sample. No paid compute is authorized.
