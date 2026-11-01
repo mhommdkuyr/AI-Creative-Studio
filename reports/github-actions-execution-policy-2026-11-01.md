@@ -54,3 +54,15 @@
 - No final MP4 was produced. No file was uploaded to the destination Drive folder, and no source video, voice master, or checkpoint was deleted or replaced.
 - The PR includes `notebooks/musetalk_lipsync_colab.ipynb`, but this pass did not open or execute it; all checks above ran through GitHub Actions only.
 - Required next capability: an already-authorized, connected GPU runner within existing permitted limits, or a materially faster backend benchmarked on the same sample. No paid compute is authorized.
+
+
+## Documentation-commit CI verification — 2026-11-01 (head bddb1403809a374459c68b2caa7aefaae423ce1f)
+
+- The checkpoint update was committed as `bddb1403809a374459c68b2caa7aefaae423ce1f`; PR #10 remains open and mergeable.
+- The new PR synchronization triggered four GitHub Actions workflows. All completed successfully:
+  - `MuseTalk candidate planner tests` run `41282384124`: 11/11 tests passed.
+  - `Build verified MuseTalk candidate plan` run `41282384095`: success; same 41 safe lines / 100 clips / 629.534 seconds. Artifact `13073581844`, 5,462 bytes, SHA-256 `ca8ace14d56a8138dd4a99b465549e0d74814027ae0e125e385e960c604f1783`.
+  - `cloudflare-edge-ci` run `41282384132`: success.
+  - `integrated-mvp-ci` run `41282384099`: both web and API jobs succeeded, including API regression.
+- The current commit's Vercel status was pending at the last check; this is separate from the completed successful GitHub Actions jobs.
+- No CPU inference, final MP4 mux, full-length decode, visual/phonetic lip-sync review, or Drive upload was performed. No Colab notebook was opened or executed.
