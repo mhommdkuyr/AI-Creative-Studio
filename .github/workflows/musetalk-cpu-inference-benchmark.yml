@@ -19,6 +19,11 @@ on:
         type: boolean
         required: false
         default: false
+      run_cpu_pilot:
+        description: Explicitly run the expensive CPU MuseTalk pilot (about 2 hours on the last hosted runner)
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -168,6 +173,9 @@ jobs:
           compression-level: 6
 
   cpu-inference-pilot:
+    # MuseTalk CPU inference is very slow (last 11.775s pilot took 7,266s).
+    # Never spend hosted-runner minutes automatically on push; require explicit dispatch opt-in.
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_cpu_pilot }}
     runs-on: ubuntu-latest
     timeout-minutes: 180
     env:
